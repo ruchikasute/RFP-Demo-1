@@ -22,8 +22,7 @@ from Modules.prompts import (
     get_resource_schedule_and_commercial_prompt,
     get_communication_plan_prompt
 )
-from langchain_pinecone import PineconeVectorStore
-from pinecone import Pinecone
+
 
 
 # -------------------------------------------------------
