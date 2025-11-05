@@ -445,14 +445,6 @@ async def async_generate_communication_plan(reference_text, condensed_rfp):
     )
     return response.choices[0].message.content.strip()
 
-# -------------------------------------------------------
-# 3. STREAMLIT UI (Revamped Professional Look)
-# -------------------------------------------------------
-# st.markdown("<div class='main-header'>Automate Your <span class='highlight-text'>Proposal Response</span></div>", unsafe_allow_html=True)
-# st.markdown("<p class='sub-tagline'>Respond to RFPs in minutes with AI-driven content generation.</p>", unsafe_allow_html=True)
-
-
-
 # --- Conditional Logic ---
 def main():
         # --- Step 1: Upload ---

@@ -1,10 +1,17 @@
 import streamlit as st
-import integration  # 👈 This will call your current async generator
+import integration, coreasses # 👈 This will call your current async generator
+
 
 # -------------------------------------------------------
 # 1. PAGE CONFIGURATION
 # -------------------------------------------------------
 st.set_page_config(page_title="RFP Proposal AI Generator", layout="wide")
+
+# -------------------------------------------------------
+# 2. SESSION INITIALIZATION (FIX)
+# -------------------------------------------------------
+if "view" not in st.session_state:
+    st.session_state.view = "home"  # ✅ only once on first load
 
 # -------------------------------------------------------
 # 2. CUSTOM CSS
@@ -119,8 +126,8 @@ elif st.session_state.view == "integration":
 # 6. CORE ASSESSMENT MODULE
 # -------------------------------------------------------
 elif st.session_state.view == "coreasses":
+    coreasses.main()
     st.subheader("💼 Core Assessment Module")
-    st.write("Coming soon...")
     st.markdown("<div class='back-btn'>", unsafe_allow_html=True)
     if st.button("⬅ Back to Home", key="back_home"):
         st.session_state.view = "home"
