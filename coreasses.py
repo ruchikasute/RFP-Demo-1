@@ -13,22 +13,22 @@ from dotenv import load_dotenv
 # --- Load your .env file safely ---
 load_dotenv()
 
-# --- Normalize environment variables for Azure SDK ---
-# These three lines make sure AzureOpenAI gets what it expects
-os.environ["AZURE_OPENAI_API_KEY"] = os.getenv("AZURE_OPENAI_FRFP_KEY")
-os.environ["AZURE_OPENAI_ENDPOINT"] = "https://craveopenai.openai.azure.com/"
-os.environ["AZURE_OPENAI_API_VERSION"] = os.getenv("AZURE_OPENAI_FRFP_VERSION")
+# # --- Normalize environment variables for Azure SDK ---
+# # These three lines make sure AzureOpenAI gets what it expects
+# os.environ["AZURE_OPENAI_API_KEY"] = os.getenv("AZURE_OPENAI_FRFP_KEY")
+# os.environ["AZURE_OPENAI_ENDPOINT"] = "https://craveopenai.openai.azure.com/"
+# os.environ["AZURE_OPENAI_API_VERSION"] = os.getenv("AZURE_OPENAI_FRFP_VERSION")
 
-# --- Initialize the Azure OpenAI client ---
-try:
-    client = AzureOpenAI(
-        azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
-        api_key=os.environ["AZURE_OPENAI_API_KEY"],
-        api_version=os.environ["AZURE_OPENAI_API_VERSION"]
-    )
-    st.info("✅ Connected to Azure OpenAI successfully.")
-except Exception as e:
-    st.error(f"⚠️ Azure OpenAI connection failed: {e}")
+# # --- Initialize the Azure OpenAI client ---
+# try:
+#     client = AzureOpenAI(
+#         azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
+#         api_key=os.environ["AZURE_OPENAI_API_KEY"],
+#         api_version=os.environ["AZURE_OPENAI_API_VERSION"]
+#     )
+#     # st.info("✅ Connected to Azure OpenAI successfully.")
+# except Exception as e:
+#     st.error(f"⚠️ Azure OpenAI connection failed: {e}")
 
 
 # ============================================================
