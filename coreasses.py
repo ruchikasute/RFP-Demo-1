@@ -1,16 +1,20 @@
 import streamlit as st
 import pandas as pd
-import time
 import re
-from openai import AzureOpenAI
+import glob
+import io
 import os
+from pptx import Presentation
+from docx import Document
+from openai import AzureOpenAI
+
 
 # ============================================================
-# SECTION 1 — Helper Setup
+# Helper Functions
 # ============================================================
 
 def call_llm(prompt, client, model_name):
-    """Call the Azure OpenAI LLM."""
+    """Call Azure OpenAI model."""
     try:
         response = client.chat.completions.create(
             model=model_name,
@@ -22,240 +26,424 @@ def call_llm(prompt, client, model_name):
         return f"Error: {e}"
 
 
-def format_steps(steps_text):
-    """Convert numbered steps into HTML list."""
-    if not steps_text:
-        return ""
-    lines = [line.strip() for line in steps_text.split("\n") if line.strip()]
-    cleaned = [re.sub(r'^\d+[\.\)]\s*', '', l) for l in lines]
-    return "<ol>" + "".join([f"<li>{line}</li>" for line in cleaned]) + "</ol>"
+def extract_ppt_text(ppt_path):
+    """Extract readable text from PPT."""
+    text = ""
+    prs = Presentation(ppt_path)
+    for slide in prs.slides:
+        for shape in slide.shapes:
+            if hasattr(shape, "text"):
+                text += shape.text + "\n"
+    return text.strip()
+def extract_section_text(sow_text, section_number):
+            """
+            Extract text between numbered section headings like:
+            1. Executive Summary
+            2. Features of CoreAssess.AI
+            Works for headings with or without markdown (**, ##, etc.)
+            """
+            pattern = (
+                rf"(?:\**\s*#*\s*)?"                # optional markdown prefix
+                rf"{section_number}\.\s*[A-Za-z0-9 \-&()]+?(?:\**\s*)?"  # the numbered heading
+                rf"(.*?)(?=\n\s*(?:\**\s*#*\s*)?\d+\.\s+[A-Z]|\Z)"      # stop at next section (digit + dot + capital)
+            )
+            match = re.search(pattern, sow_text, flags=re.DOTALL | re.IGNORECASE)
+            return match.group(1).strip() if match else ""
+
+# def extract_section_text(sow_text, section_number):
+#     """
+#     Extract text between sections like:
+#     **3. Key Findings & Recommendations Summary**
+#     Stops before the next numbered section (4., ## 4., etc.)
+#     """
+#     # Match the section header, like **3. Key Findings...**
+#     # and capture everything until the next numbered header.
+#     pattern = rf"{section_number}\.\s*[A-Za-z0-9 &–\-]+?(?=\s*\n)(.*?)(?=\n\s*(?:\**\s*#*\s*)?\d+\.\s|$)"
+
+#     match = re.search(pattern, sow_text, flags=re.DOTALL | re.IGNORECASE)
+#     if not match:
+#         # Try again with markdown-style headings like ## 3.
+#         pattern2 = rf"(?:\*\*|##)?\s*{section_number}\.\s*[A-Za-z0-9 &–\-]+?(?:\*\*|##)?\s*(.*?)(?=\n\s*(?:\*\*|##)?\s*\d+\.\s|$)"
+#         match = re.search(pattern2, sow_text, flags=re.DOTALL | re.IGNORECASE)
+
+#     return match.group(1).strip() if match else ""
+from docx.shared import Pt
+
+# def extract_section_text(sow_text, section_number):
+#     """
+#     Extract section text between numbered headings like:
+#     4. Benefits over Traditional Assessment
+#     Supports markdown (**, ##), tab spacing, and mixed symbols.
+#     """
+#     pattern = rf"(?is)(?:[#\*\s]*){section_number}\.\s*([A-Za-z0-9 \-&()]+?)[#\*\s:]*\n+(.*?)(?=\n\s*(?:[#\*\s]*)\d+\.\s|$)"
+#     match = re.search(pattern, sow_text)
+#     return match.group(2).strip() if match else ""
+# def extract_section_text(sow_text, section_number):
+#     """
+#     Extract section text between numbered headings like:
+#     2. Features of CoreAssess.AI
+#     Handles markdown (**), tabs, and spaces gracefully.
+#     """
+#     pattern = rf"(?is)(?:[#\*\s]*){section_number}\.\s*[A-Za-z0-9 \-&()]+?(?:\*\*|[#\s]*)?\s*(?:\r?\n)+(.*?)(?=\n\s*(?:[#\*\s]*)\d+\.\s|$)"
+#     match = re.search(pattern, sow_text)
+#     return match.group(1).strip() if match else ""
 
 
-def build_prompt(row_dict):
-    """Build LLM prompt for per-object analysis."""
-    content = "\n".join([f"{k}: {v}" for k, v in row_dict.items()])
-    return f"""
-You are analyzing an SAP object for modernization.
 
-Task:
-1. Write one-sentence **Issue**.
-2. Write exactly 5 concise **Key Modernization Steps** (numbered 1–5).
+def insert_annexure_table(doc, placeholder, df):
+    """Insert an Annexure-style table (Object, Issue, Key Modernization Steps) into the placeholder."""
+    inserted = False
 
-Row details:
-{content}
+    for para in doc.paragraphs:
+        if placeholder in para.text:
+            inserted = True
+            para.text = ""  # clear placeholder text
 
-Format:
-Issue: <one sentence>
-Key Modernization Steps:
-1. <step 1>
-2. <step 2>
-3. <step 3>
-4. <step 4>
-5. <step 5>
-"""
+            # --- Create table ---
+            table = doc.add_table(rows=1, cols=3)
+            table.style = "Table Grid"
 
+            hdr_cells = table.rows[0].cells
+            hdr_cells[0].text = "Object Name"
+            hdr_cells[1].text = "Issue"
+            hdr_cells[2].text = "Key Modernization Steps"
 
-def process_file(df, client, model_name):
-    """Process each ABAP object and generate Issue + Steps."""
-    results = []
-    progress = st.progress(0)
+            # --- Format header cells ---
+            for cell in hdr_cells:
+                for paragraph in cell.paragraphs:
+                    for run in paragraph.runs:
+                        run.bold = True
+                cell.width = Pt(200)
 
-    for i, idx in enumerate(df.index):
-        row = df.loc[idx].to_dict()
-        text = call_llm(build_prompt(row), client, model_name)
+            # --- Populate rows from DataFrame ---
+            for _, row in df.iterrows():
+                row_cells = table.add_row().cells
+                row_cells[0].text = str(row.get("object name", row.get("Object Name", "")))
+                row_cells[1].text = re.sub(r"<[^>]+>", "", str(row.get("issue", row.get("Issue", ""))))
+                row_cells[2].text = re.sub(r"<[^>]+>", "", str(row.get("key modernization steps", row.get("Key Modernization Steps", ""))))
 
-        issue, steps = "", ""
-        if "Key Modernization Steps:" in text:
-            parts = text.split("Key Modernization Steps:")
-            issue = parts[0].replace("Issue:", "").strip()
-            steps = parts[1].strip()
-        else:
-            issue = text.strip()
-
-        # ✅ Include Recommended Approach dynamically
-        approach_value = ""
-        for k in row.keys():
-            if "approach" in k.lower():
-                approach_value = row[k]
-                break
-
-        results.append({
-            "Object Name": row.get("Object Name", ""),
-            "Issue": f"<b>{issue}</b>",
-            "Recommended Approach": approach_value,
-            "Key Modernization Steps": format_steps(steps)
-        })
-
-        progress.progress((i + 1) / len(df))
-        time.sleep(0.2)
-
-    return pd.DataFrame(results)
-
-
-def generate_sections(df, client, model_name):
-    """Generate executive summary, standard approach & pricing sections."""
-    df.columns = [c.strip().lower() for c in df.columns]
-
-    # Find approach column
-    approach_col = None
-    for col in df.columns:
-        if "approach" in col:
-            approach_col = col
+            para._element.addnext(table._element)
             break
 
-    total = len(df)
-    if approach_col:
-        df[approach_col] = df[approach_col].astype(str).str.strip().str.lower()
-        onstack = df[approach_col].str.contains("on[- ]?stack", case=False, na=False).sum()
-        sidebyside = df[approach_col].str.contains("side[- ]?by[- ]?side", case=False, na=False).sum()
-        retire = df[approach_col].str.contains("retire", case=False, na=False).sum()
-    else:
-        onstack = sidebyside = retire = 0
+    if not inserted:
+        st.warning("⚠️ No <<ANNEXURE>> placeholder found. Appending Annexure at the end.")
+        doc.add_page_break()
+        doc.add_heading("Annexure — Modernization Object Summary", level=1)
+        table = doc.add_table(rows=1, cols=3)
+        table.style = "Table Grid"
 
-    issues_text = "; ".join(df.get("issue", df.columns[0]).astype(str).tolist()[:10])
+        hdr_cells = table.rows[0].cells
+        hdr_cells[0].text = "Object Name"
+        hdr_cells[1].text = "Issue"
+        hdr_cells[2].text = "Key Modernization Steps"
+
+        for _, row in df.iterrows():
+            row_cells = table.add_row().cells
+            row_cells[0].text = str(row.get("object name", row.get("Object Name", "")))
+            row_cells[1].text = re.sub(r"<[^>]+>", "", str(row.get("issue", row.get("Issue", ""))))
+            row_cells[2].text = re.sub(r"<[^>]+>", "", str(row.get("key modernization steps", row.get("Key Modernization Steps", ""))))
+
+# ============================================================
+# Core Function
+# ============================================================
+
+def generate_sow(df, client, model_name, client_name=None, repo_dir="Knowledge_Repo/Coreassess_KR"):
+    """Generate full SOW docx directly."""
+    client_ref = client_name if client_name else "the Client"
+
+    # Find available PPT references
+    ppt_files = glob.glob(os.path.join(repo_dir, "*.pptx"))
+    if not ppt_files:
+        ppt_text = "No PPTs found."
+        chosen_ppt = "None"
+    else:
+        ppt_text = extract_ppt_text(ppt_files[0])
+        chosen_ppt = ppt_files[0]
+
+    # Build prompt
+    # Build prompt
+    total = len(df)
+
+    # Safe extraction for sample issues
+    if "issue" in df.columns:
+        sample_col = df["issue"]
+    else:
+        sample_col = df.iloc[:, 0]
+
+    sample_issues = "; ".join(sample_col.astype(str).tolist()[:5])
 
     prompt = f"""
-You are an SAP modernization consultant.
-Prepare an executive summary based on:
+        You are a senior SAP consultant from Crave Infotech preparing a professional Statement of Work (SOW)
+        for a Clean Core Assessment (CoreAssess.AI) engagement with {client_ref}.
 
-Data Summary:
-- Total Objects: {total}
-- On-Stack: {onstack}
-- Side-by-Side: {sidebyside}
-- Retire: {retire}
+        Below is Crave's official reference content from our CoreAssess knowledge presentation.
+        This content represents our internal tone, structure, and offering details.
+        Analyze it carefully to understand our standard messaging, flow, and technical vocabulary.
 
-Sample Issues:
-{issues_text}
+        ---
+        {ppt_text}
+        ---
 
-Write **three interconnected sections** in markdown:
+        Now, using the reference as a guide (not to copy text directly), write a *comprehensive, polished, client-ready*
+        Statement of Work document that covers the following sections, aligned with Crave Infotech’s tone:
 
-### 1. Analysis
-Summarize total objects analyzed, approach distribution, and key findings.
-
-### 2. Standard Approach
-Describe modernization strategy (On-Stack, Side-by-Side, Retire) based on patterns.
-
-### 3. Pricing and Timeline
-Show a short professional 3-phase table with realistic effort and cost.
-"""
-    return call_llm(prompt, client, model_name)
+        1. Executive Summary  
+        - Context of Clean Core Assessment  
+        - Value proposition of CoreAssess.AI  
+        - Alignment with SAP’s Clean Core strategy  
 
 
-# ============================================================
-# SECTION 2 — MAIN FUNCTION
-# ============================================================
-def main():
-    st.title("🌐 Core Assess.ai Proposal")
+        2. Features of CoreAssess.AI 
+        - Summarize the tool’s key technical capabilities and components.
+        - Mention capabilities like On-StackExtensibility, Side-by-Side Extensibility, SQL Analysis, and ROI Calculation.
+        - Explain each capability with 2-3 points
+        
+        3. Key Findings & Recommendations Summary  
+        - Use aggregated counts from the data below  
+        - Present technical and business rationale for modernization
 
-    with st.expander("About this Assessment"):
-        st.markdown("""
-        **Use Case — Clean Core Assessment (CoreAssess.AI)**  
-        Problem: Large volumes of custom ABAP code create technical debt, upgrade risks, and maintenance burden.  
-        Solution: CoreAssess.AI ingests ABAP object metadata and produces a prioritized assessment — issue statement, recommended modernization approach, and concise modernization steps per object.  
-        Input: Excel list of ABAP objects.  
-        Output: Executive summary, prioritized object list, and modernization recommendations.
-        """)
+        Total Objects: {total}  
 
-    uploaded = st.file_uploader("📂 Upload Excel (.xlsx)", type=["xlsx"])
-    if uploaded is None:
-        st.info("Please upload an Excel file to continue.")
-        return
+        Example Issues: {sample_issues}
+        - Include example insights and recommendations for each category — On-Stack, Side-by-Side, and Retire — drawn from the analyzed ABAP objects.  
+        - Use details from the data table to illustrate object-level examples, including Object Name, Issues, and Modernization Steps.  
+        - Structure like this:
+            1. On-Stack Extensibility: summarize key issues and modernization steps.
+            2. Side-by-Side Extensibility: summarize the findings and modernization actions.
+            3. Retire: summarize rationale and replacement steps.  
+        - End with a short summary paragraph connecting the recommendations to SAP’s Clean Core strategy.
 
-    try:
-        df = pd.read_excel(uploaded)
-    except Exception as e:
-        st.error(f"❌ Could not read the file. Error: {e}")
-        return
 
-    st.success(f"✅ File `{uploaded.name}` loaded successfully!")
-    st.subheader("Preview of Uploaded Data (first 10 rows)")
-    st.dataframe(df.head(10), use_container_width=True)
 
-    # Azure OpenAI setup
-    client = AzureOpenAI(
-        azure_endpoint=os.getenv("AZURE_OPENAI_FRFP_ENDPOINT"),
-        api_key=os.getenv("AZURE_OPENAI_FRFP_KEY"),
-        api_version=os.getenv("AZURE_OPENAI_FRFP_VERSION")
-    )
-    model_name = "codetest"
 
-    if st.button("⚡ Generate Assessment Report"):
-        final_df = process_file(df, client, model_name)
-        st.subheader("📋 Final Object Assessment Table")
+        5. Benefits over Traditional Assessment 
+        - Summarize the advantages of CoreAssess.AI compared to traditional clean core assessment methods.  
+        - Reflect the tone and structure from the reference PPT slides.  
+        - Highlight AI-dr
 
-        # --- KPI METRICS ---
-        col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Total Objects", len(final_df))
+        6. Working Together
+        - Use the tone and tiered structure from the “Working Together” slide in the PPT.  
+        - Describe Crave’s engagement options (Starter Pack, Silver, Gold, Platinum) in paragraph or tabular form.  
+        - Mention typical scope, duration, and pricing guidance (e.g., Complimentary, $50/object, $75/object, $95/object).  
+        - If the client provides a list of objects, mention that per-object pricing applies.  
+        - End with a short paragraph summarizing total estimated effort across 3 phases (Assessment, Recommendation, Presentation).
 
-        # --- Detect 'Approach' column robustly ---
-        def normalize_column(col_name: str) -> str:
-            return (
-                str(col_name)
-                .replace("\xa0", " ")
-                .replace("\n", " ")
-                .replace("\r", " ")
-                .strip()
-                .lower()
-            )
+        7. Working Together - ABAP Objects
+        - Use the reference tone from the following PPT section (do not copy directly):
+        - Summarize governance model, milestones, and deliverables.
 
-        approach_col = None
-        for col in final_df.columns:
-            clean_col = normalize_column(col)
-            if "approach" in clean_col:
-                approach_col = col
+
+        **Important:**  
+        - Use Crave Infotech’s corporate tone — confident, concise, and consultative.  
+        - Do not reuse names or context from the reference PPT (like “Oatey Co.”).  
+        - Instead, personalize all context to {client_ref}.  
+        - Write complete paragraphs (not bullet slides).  
+        - Keep length around 4–6 pages of Word content.
+        """
+
+
+    # Get LLM result
+    # --- Split SOW by numbered headings like "1. Executive Summary" ---
+    full_sow = call_llm(prompt, client, model_name)
+
+
+
+
+
+ 
+
+    # Create a simple docx
+    # doc = Document()
+    # doc.add_heading("Statement of Work (SOW)", 0)
+    # doc.add_paragraph(full_sow.strip())
+
+    # # Save in memory
+    # buffer = io.BytesIO()
+    # doc.save(buffer)
+    # buffer.seek(0)
+
+    # st.success(f"✅ SOW generated using `{os.path.basename(chosen_ppt)}`")
+    # st.download_button(
+    #     label="📥 Download SOW Document (.docx)",
+    #     data=buffer,
+    #     file_name=f"SOW_{client_ref.replace(' ', '_')}.docx",
+    #     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    # )
+    # --- Use Template ---
+    template_path = "Template/CoreAssess_Template.docx"
+
+    if os.path.exists(template_path):
+        doc = Document(template_path)
+        st.info("📄 Using Word template for SOW.")
+    else:
+        st.warning("⚠️ Template not found. Creating a blank document.")
+        doc = Document()
+
+    # --- Extract Executive Summary from SOW ---
+    # --- Extract Executive Summary (simple & forgiving) ---
+    # def extract_section_text(sow_text, section_number):
+    #     """
+    #     Extract text between numbered section headings like:
+    #     1. Executive Summary
+    #     2. Features of CoreAssess.AI
+    #     """
+    #     pattern = rf"(?:\**\s*#*\s*)?{section_number}\.\s*[A-Za-z0-9 \-&()]+?(?:\**\s*)?(.*?)(?=\n\s*(?:\**\s*#*\s*)?\d+\.\s|\Z)"
+    #     # pattern = rf"((?:\**\s*#*\s*)?{section_number}\.\s*[A-Za-z0-9 \-&()]+?(?:\**\s*)?(?:\n|$).*?)(?=\n\s*(?:\**\s*#*\s*)?\d+\.\s|\Z)"
+    #     # pattern = rf"(?s)(?:\*\*|\#\#)?\s*{section_number}\.\s*[A-Za-z0-9 \-&()]+?(?:\*\*|\#\#)?\s*(?:\r?\n)+.*?(?=(?:\r?\n)+\s*(?:\*\*|\#\#)?\s*\d+\.\s|\Z)"
+    #     match = re.search(pattern, sow_text, flags=re.DOTALL | re.IGNORECASE)
+    #     return match.group(1).strip() if match else ""
+
+
+        # match = re.search(pattern, sow_text, flags=re.DOTALL)
+        # if match:
+        #     # Extract both heading + body (group(0)) ensures title kept intact
+        #     section_text = match.group(0).strip()
+        #     return section_text
+        # return ""
+
+
+    # exec_match = re.search(
+    #     r"1\.\s*Executive\s*Summary(.*?)(?=\n\s*\d+\.\s|\Z)",
+    #     full_sow,
+    #     flags=re.DOTALL | re.IGNORECASE,
+    # )
+
+
+    # if exec_match:
+    #     exec_summary = exec_match.group(1).strip()
+    # else:
+    #     exec_summary = "Executive Summary not found in the generated SOW."
+# --- Extract sections we care about ---
+    exec_summary = extract_section_text(full_sow, 1)
+    features_section = extract_section_text(full_sow, 2)
+    findings_section = extract_section_text(full_sow, 3)
+    benefits_section = extract_section_text(full_sow, 4)
+    working_section = extract_section_text(full_sow, 5)
+    abap_section = extract_section_text(full_sow, 6)
+    insert_annexure_table(doc, "<<ANNEXURE>>", df)
+
+    if not exec_summary:
+        exec_summary = "Executive Summary not found in the generated SOW."
+    if not features_section:
+        features_section = "Features section not found in the generated SOW."
+
+    if not findings_section:
+        findings_section = "Findings section not found in the generated SOW."
+    if not benefits_section:
+        benefits_section = "Benefits section not found in the generated SOW."
+
+    if not working_section:
+        working_section = "Working Together section not found in the generated SOW."
+    if not abap_section:
+        abap_section = "ABAP Objects section not found in the generated SOW."
+    # --- Helper: insert text correctly (no upside-down order) ---
+    def insert_text_after_placeholder(doc, placeholder, text_block):
+        lines = [l.strip() for l in text_block.split("\n") if l.strip()]
+        inserted = False
+        for para in doc.paragraphs:
+            if placeholder in para.text:
+                inserted = True
+                para.text = ""  # clear placeholder text
+                # reverse insertion to preserve order
+                for line in reversed(lines):
+                    new_para = doc.add_paragraph(line)
+                    para._element.addnext(new_para._element)
                 break
+        if not inserted:
+            st.warning(f"⚠️ Placeholder {placeholder} not found. Appending at end.")
+            doc.add_page_break()
+            doc.add_heading(placeholder.replace('<', '').replace('>', ''), level=1)
+            for line in lines:
+                doc.add_paragraph(line)
 
-        if approach_col:
-            df_temp = final_df.copy()
-            df_temp[approach_col] = (
-                df_temp[approach_col]
-                .astype(str)
-                .str.lower()
-                .str.strip()
-                .str.replace(r"[^a-z\- ]", "", regex=True)
-            )
+    # --- Insert sections ---
+    insert_text_after_placeholder(doc, "<<EXEC_SUMMARY>>", exec_summary)
+    insert_text_after_placeholder(doc, "<<FEATURES>>", features_section)
+    insert_text_after_placeholder(doc, "<<FINDINGS >>", findings_section)
+    insert_text_after_placeholder(doc, "<<BENEFITS>>", benefits_section)
+    insert_text_after_placeholder(doc, "<<WORKING TOGETHER>>", working_section)
+    insert_text_after_placeholder(doc, "<<ABAP OBJECTS>>", abap_section)
+    # --- Add full SOW at the end (so nothing is lost) ---
+    doc.add_page_break()
+    doc.add_heading("Full Statement of Work (Generated)", level=1)
+    for line in full_sow.split("\n"):
+        if line.strip():
+            doc.add_paragraph(line.rstrip())
 
-            # --- Count categories ---
-            onstack_count = df_temp[approach_col].str.contains("on[- ]?stack", case=False, na=False).sum()
-            sidebyside_count = df_temp[approach_col].str.contains("side[- ]?by[- ]?side", case=False, na=False).sum()
-            retire_count = df_temp[approach_col].str.contains("retire", case=False, na=False).sum()
 
-            col2.metric("🟦 On-Stack", onstack_count)
-            col3.metric("🟧 Side-by-Side", sidebyside_count)
-            col4.metric("🔴 Retire", retire_count)
+    # # --- Replace <<EXEC_SUMMARY>> in template ---
+    # placeholder_found = False
+    # for para in doc.paragraphs:
+    #     if "<<EXEC_SUMMARY>>" in para.text:
+    #         placeholder_found = True
+    #         # clear placeholder text
+    #         para.text = ""
+    #         # add the extracted Executive Summary content
+    #         # for line in exec_summary.split("\n"):
+    #         #     if line.strip():
+    #         #         new_para = doc.add_paragraph(line.strip())
+    #         #         para._element.addnext(new_para._element)
+    #         # Insert in correct order (so it doesn't appear upside down)
+    #         lines = [l.strip() for l in exec_summary.split("\n") if l.strip()]
+    #         for line in reversed(lines):  # reverse insertion order
+    #             new_para = doc.add_paragraph(line)
+    #             para._element.addnext(new_para._element)
 
-            # --- Chart visualization ---
+    #         break
 
-        else:
-            st.warning("⚠️ No column containing 'Approach' found in Excel.")
-            col2.metric("On-Stack", 0)
-            col3.metric("Side-by-Side", 0)
-            col4.metric("Retire", 0)
+    # if not placeholder_found:
+    #     st.warning("⚠️ No <<EXEC_SUMMARY>> placeholder found. Appending at end of document.")
+    #     doc.add_paragraph(exec_summary)
 
-        # --- TABLE PREVIEW ---
-        st.markdown("""
-            <style>
-            .dataframe td {
-                white-space: normal !important;
-                word-wrap: break-word !important;
-                max-width: 500px;
-                vertical-align: top !important;
-            }
-            </style>
-        """, unsafe_allow_html=True)
+    # --- Add full SOW at the end ---
+    doc.add_page_break()
+    doc.add_heading("Full Statement of Work (Generated)", level=1)
+    doc.add_paragraph(full_sow.strip())
 
-        st.markdown(final_df.to_html(index=False, escape=False), unsafe_allow_html=True)
+    # --- Save in memory ---
+    buffer = io.BytesIO()
+    doc.save(buffer)
+    buffer.seek(0)
 
-        csv = final_df.to_csv(index=False).encode("utf-8")
-        st.download_button(
-            "📥 Download Final Assessment Table",
-            data=csv,
-            file_name="Final_Assessment_Table.csv",
-            mime="text/csv"
+    # --- Preview section ---
+    st.markdown("### 📄 Preview of Generated SOW")
+    preview_text = "\n".join(full_sow.split("\n")[:50])  # show first ~50 lines
+    st.text(preview_text.strip())
+
+
+    # --- Streamlit output ---
+    st.success(f"✅ SOW generated using `{os.path.basename(chosen_ppt)}` and inserted into template.")
+    st.download_button(
+        label="📥 Download SOW Document (.docx)",
+        data=buffer,
+        file_name=f"SOW_{client_ref.replace(' ', '_')}.docx",
+        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
+
+
+
+# ============================================================
+# Streamlit UI
+# ============================================================
+
+def main():
+    st.title("🌐 CoreAssess.AI — Auto SOW Generator")
+
+    client_name = st.text_input("Client Name", placeholder="e.g., Adani Group")
+    uploaded = st.file_uploader("📂 Upload Excel (.xlsx)", type=["xlsx"])
+
+    if uploaded:
+        df = pd.read_excel(uploaded)
+        st.success(f"✅ File `{uploaded.name}` loaded successfully!")
+        st.dataframe(df.head(5))
+
+        # Azure OpenAI setup
+        client = AzureOpenAI(
+            azure_endpoint=os.getenv("AZURE_OPENAI_FRFP_ENDPOINT"),
+            api_key=os.getenv("AZURE_OPENAI_FRFP_KEY"),
+            api_version=os.getenv("AZURE_OPENAI_FRFP_VERSION")
         )
+        model_name = "codetest"
 
-        # --- Generate LLM Summary ---
-        st.markdown("---")
-        st.subheader("📊 Generating Analysis, Approach, and Pricing...")
-        sections_text = generate_sections(final_df, client, model_name)
-        st.markdown(sections_text, unsafe_allow_html=True)
+        if st.button("⚡ Generate SOW Document"):
+            generate_sow(df, client, model_name, client_name)

@@ -127,7 +127,7 @@ elif st.session_state.view == "integration":
 # -------------------------------------------------------
 elif st.session_state.view == "coreasses":
     coreasses.main()
-    st.subheader("💼 Core Assessment Module")
+    # st.subheader("💼 Core Assessment Module")
     st.markdown("<div class='back-btn'>", unsafe_allow_html=True)
     if st.button("⬅ Back to Home", key="back_home"):
         st.session_state.view = "home"
