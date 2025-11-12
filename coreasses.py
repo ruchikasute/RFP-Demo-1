@@ -9,13 +9,7 @@ from docx import Document
 from openai import AzureOpenAI
 from dotenv import load_dotenv
 import re
-from Modules.common_ui import (
-    load_global_style,
-    header,
-    upload_box,
-    preview_tabs,
-    download_button
-)
+
 
 
 # --- Load your .env file safely ---
