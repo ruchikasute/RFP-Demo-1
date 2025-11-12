@@ -126,6 +126,34 @@ div.stButton > button:hover {
 # -------------------------------------------------------
 # 2. UTILITIES
 # -------------------------------------------------------
+# --- Helper: Condensed Context ---
+async def get_condensed_context(client, reference_text, rfp_text):
+    """Summarize RFP + reference text into compact context for faster, stable LLM calls."""
+    condense_prompt = f"""
+    You are a professional SAP proposal analyst.
+    Summarize the following RFP and reference text into about 800–1000 tokens.
+    Include:
+    - Project purpose
+    - Scope
+    - Objectives
+    - Detected technologies and tone
+    ---
+    RFP TEXT:
+    {rfp_text[:7000]}
+
+    REFERENCE MATERIAL:
+    {reference_text[:4000]}
+    """
+
+    response = await client.chat.completions.create(
+        model="gpt-4o",
+        temperature=0.3,
+        max_tokens=1200,
+        messages=[{"role": "user", "content": condense_prompt}]
+    )
+    return response.choices[0].message.content.strip()
+
+
 
 def extract_text(file):
     """Extract text from PDF or DOCX"""
@@ -211,6 +239,7 @@ def insert_executive_summary_into_template(
     scope_text=None,
     resource_schedule_text=None,
     communication_plan_text=None,
+    awards_image_path=None, 
 ):
     """
     Replace placeholders in the template:
@@ -346,27 +375,105 @@ def insert_executive_summary_into_template(
                     parent.insert(idx, element)
                 return
 
-    # Replace placeholders with sections
+    def insert_image_at_placeholder(doc, placeholder, image_path, width_inches=5):
+        """
+        Finds a paragraph with the given placeholder text (even inside tables)
+        and replaces it with an image.
+        """
+        if not image_path or not os.path.exists(image_path):
+            print(f"⚠️ Image not found at {image_path}")
+            return
+
+        def replace_in_paragraphs(paragraphs):
+            for para in paragraphs:
+                if placeholder in para.text:
+                    parent = para._element.getparent()
+                    idx = parent.index(para._element)
+                    parent.remove(para._element)
+
+                    # Insert image paragraph
+                    new_para = doc.add_paragraph()
+                    new_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    run = new_para.add_run()
+                    run.add_picture(image_path, width=Inches(width_inches))
+
+                    parent.insert(idx, new_para._element)
+                    print(f"✅ Inserted image for placeholder {placeholder}")
+                    return True
+            return False
+
+        # 1️⃣ Try paragraphs at the root
+        if replace_in_paragraphs(doc.paragraphs):
+            return
+
+        # 2️⃣ Try paragraphs inside tables
+        for table in doc.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    if replace_in_paragraphs(cell.paragraphs):
+                        return
+                    
+    # --- Perform replacements and image insertion ---
     replace_placeholder(doc, "<<EXEC_SUMMARY>>", summary_text)
     replace_placeholder(doc, "<<OBJECTIVE>>", objective_text)
     replace_placeholder(doc, "<<SCOPE_TEXT>>", scope_text)
     replace_placeholder(doc, "<<RESOURCE_SCHEDULE>>", resource_schedule_text)
     replace_placeholder(doc, "<<COMMUNICATION_PLAN>>", communication_plan_text)
 
+    # ✅ Insert Awards image if provided
+    insert_image_at_placeholder(doc, "<<AWARDS>>", awards_image_path)
+
+    # ✅ Finally return the document
     return doc
 
 
+# async def async_generate_exec_summary_and_objective(reference_text,rfp_text, num_interfaces=113):
+#     # client = AsyncAzureOpenAI(
+#     #     azure_endpoint=os.getenv("AZURE_OPENAI_FRFP_ENDPOINT"),
+#     #     api_key=os.getenv("AZURE_OPENAI_FRFP_KEY"),
+#     #     api_version=os.getenv("AZURE_OPENAI_FRFP_VERSION")
+#     # )
+#     client = async_client
 
-async def async_generate_exec_summary_and_objective(reference_text, condensed_rfp, num_interfaces=113):
-    # client = AsyncAzureOpenAI(
-    #     azure_endpoint=os.getenv("AZURE_OPENAI_FRFP_ENDPOINT"),
-    #     api_key=os.getenv("AZURE_OPENAI_FRFP_KEY"),
-    #     api_version=os.getenv("AZURE_OPENAI_FRFP_VERSION")
-    # )
+#     condensed_context = await get_condensed_context(client, reference_text, rfp_text)
+#     prompt = get_executive_summary_and_objective_prompt(condensed_context, num_interfaces)
+
+
+#     # prompt = get_executive_summary_and_objective_prompt(reference_text, condensed_rfp, num_interfaces)
+
+#     response = await client.chat.completions.create(
+#         model="Codetest",
+#         temperature=0.3,
+#         max_tokens=2000,
+#         messages=[{"role": "user", "content": prompt}]
+#     )
+
+#     full_output = response.choices[0].message.content.strip()
+
+#     # Safer regex split
+#     exec_text = ""
+#     obj_text = ""
+
+#     match_exec = re.search(r"(?i)\*\*?Executive Summary\*\*?\s*([\s\S]*?)(?=\*\*?Objective\*\*?)", full_output)
+#     if match_exec:
+#         exec_text = match_exec.group(1).strip()
+
+#     match_obj = re.search(r"(?i)\*\*?Objective\*\*?\s*(.*)", full_output, re.S)
+#     if match_obj:
+#         obj_text = match_obj.group(1).strip()
+
+#     # fallback
+#     if not exec_text:
+#         exec_text = full_output[:len(full_output)//2]
+#     if not obj_text:
+#         obj_text = full_output[len(full_output)//2:]
+
+#     return exec_text, obj_text
+async def async_generate_exec_summary_and_objective(reference_text, rfp_text, num_interfaces=113):
     client = async_client
+    condensed_context = await get_condensed_context(client, reference_text, rfp_text)
 
-
-    prompt = get_executive_summary_and_objective_prompt(reference_text, condensed_rfp, num_interfaces)
+    prompt = get_executive_summary_and_objective_prompt(reference_text, condensed_context, num_interfaces)
 
     response = await client.chat.completions.create(
         model="Codetest",
@@ -377,73 +484,115 @@ async def async_generate_exec_summary_and_objective(reference_text, condensed_rf
 
     full_output = response.choices[0].message.content.strip()
 
-    # Safer regex split
-    exec_text = ""
-    obj_text = ""
+    match_exec = re.search(r"(?i)\bExecutive Summary\b\s*([\s\S]*?)(?=\bObjective\b|$)", full_output)
+    exec_text = match_exec.group(1).strip() if match_exec else full_output[:len(full_output)//2]
 
-    match_exec = re.search(r"(?i)\*\*?Executive Summary\*\*?\s*([\s\S]*?)(?=\*\*?Objective\*\*?)", full_output)
-    if match_exec:
-        exec_text = match_exec.group(1).strip()
-
-    match_obj = re.search(r"(?i)\*\*?Objective\*\*?\s*(.*)", full_output, re.S)
-    if match_obj:
-        obj_text = match_obj.group(1).strip()
-
-    # fallback
-    if not exec_text:
-        exec_text = full_output[:len(full_output)//2]
-    if not obj_text:
-        obj_text = full_output[len(full_output)//2:]
+    match_obj = re.search(r"(?i)\bObjective\b\s*([\s\S]*)", full_output)
+    obj_text = match_obj.group(1).strip() if match_obj else full_output[len(full_output)//2:]
 
     return exec_text, obj_text
 
 
-async def async_generate_scope_sections(reference_text, condensed_rfp, num_interfaces=None):
+# async def async_generate_scope_sections(reference_text,rfp_text, num_interfaces=None):
     # client = AsyncAzureOpenAI(
     #     azure_endpoint=os.getenv("AZURE_OPENAI_FRFP_ENDPOINT"),
     #     api_key=os.getenv("AZURE_OPENAI_FRFP_KEY"),
     #     api_version=os.getenv("AZURE_OPENAI_FRFP_VERSION")
     # )
-    client = async_client
+    # client = async_client
 
-    prompt = get_scope_prereq_assumptions_prompt(reference_text, condensed_rfp, num_interfaces)
-    response = await client.chat.completions.create(
-        model="Codetest", temperature=0.3, max_tokens=1200,
-        messages=[{"role": "user", "content": prompt}]
-    )
-    return response.choices[0].message.content.strip()
+    # condensed_context = await get_condensed_context(client, reference_text, rfp_text)
+    # prompt = get_scope_prereq_assumptions_prompt(condensed_context, num_interfaces)
 
 
-async def async_generate_resource_schedule_and_commercial(reference_text, condensed_rfp):
-    # client = AsyncAzureOpenAI(
-    #     azure_endpoint=os.getenv("AZURE_OPENAI_FRFP_ENDPOINT"),
-    #     api_key=os.getenv("AZURE_OPENAI_FRFP_KEY"),
-    #     api_version=os.getenv("AZURE_OPENAI_FRFP_VERSION")
+    # # prompt = get_scope_prereq_assumptions_prompt(reference_text, condensed_rfp, num_interfaces)
+    # response = await client.chat.completions.create(
+    #     model="Codetest", temperature=0.3, max_tokens=1200,
+    #     messages=[{"role": "user", "content": prompt}]
     # )
-    client = async_client
+    # return response.choices[0].message.content.strip()
 
-    prompt = get_resource_schedule_and_commercial_prompt(reference_text, condensed_rfp)
+async def async_generate_scope_sections(reference_text, rfp_text, num_interfaces=None):
+    client = async_client
+    condensed_context = await get_condensed_context(client, reference_text, rfp_text)
+
+    prompt = get_scope_prereq_assumptions_prompt(reference_text, condensed_context, num_interfaces)
+
     response = await client.chat.completions.create(
-        model="Codetest", temperature=0.3, max_tokens=2000,
+        model="Codetest",
+        temperature=0.3,
+        max_tokens=1500,
         messages=[{"role": "user", "content": prompt}]
     )
     return response.choices[0].message.content.strip()
 
 
-async def async_generate_communication_plan(reference_text, condensed_rfp):
-    # client = AsyncAzureOpenAI(
-    #     azure_endpoint=os.getenv("AZURE_OPENAI_FRFP_ENDPOINT"),
-    #     api_key=os.getenv("AZURE_OPENAI_FRFP_KEY"),
-    #     api_version=os.getenv("AZURE_OPENAI_FRFP_VERSION")
-    # )
-    client = async_client
+# async def async_generate_resource_schedule_and_commercial(reference_text,rfp_text):
+#     # client = AsyncAzureOpenAI(
+#     #     azure_endpoint=os.getenv("AZURE_OPENAI_FRFP_ENDPOINT"),
+#     #     api_key=os.getenv("AZURE_OPENAI_FRFP_KEY"),
+#     #     api_version=os.getenv("AZURE_OPENAI_FRFP_VERSION")
+#     # )
+#     client = async_client
 
-    prompt = get_communication_plan_prompt(reference_text, condensed_rfp)
+#     condensed_context = await get_condensed_context(client, reference_text, rfp_text)
+#     prompt = get_resource_schedule_and_commercial_prompt(condensed_context)
+
+
+#     # prompt = get_resource_schedule_and_commercial_prompt(reference_text, condensed_rfp)
+#     response = await client.chat.completions.create(
+#         model="Codetest", temperature=0.3, max_tokens=2000,
+#         messages=[{"role": "user", "content": prompt}]
+#     )
+#     return response.choices[0].message.content.strip()
+async def async_generate_resource_schedule_and_commercial(reference_text, rfp_text):
+    client = async_client
+    condensed_context = await get_condensed_context(client, reference_text, rfp_text)
+
+    prompt = get_resource_schedule_and_commercial_prompt(reference_text, condensed_context)
+
     response = await client.chat.completions.create(
-        model="4o", temperature=0.3, max_tokens=2500,
+        model="Codetest",
+        temperature=0.3,
+        max_tokens=2000,
         messages=[{"role": "user", "content": prompt}]
     )
     return response.choices[0].message.content.strip()
+
+
+# async def async_generate_communication_plan(reference_text, rfp_text):
+#     # client = AsyncAzureOpenAI(
+#     #     azure_endpoint=os.getenv("AZURE_OPENAI_FRFP_ENDPOINT"),
+#     #     api_key=os.getenv("AZURE_OPENAI_FRFP_KEY"),
+#     #     api_version=os.getenv("AZURE_OPENAI_FRFP_VERSION")
+#     # )
+#     client = async_client
+
+#     condensed_context = await get_condensed_context(client, reference_text, rfp_text)
+#     prompt = get_communication_plan_prompt(condensed_context)
+
+
+#     # prompt = get_communication_plan_prompt(reference_text, condensed_rfp)
+#     response = await client.chat.completions.create(
+#         model="4o", temperature=0.3, max_tokens=2500,
+#         messages=[{"role": "user", "content": prompt}]
+#     )
+#     return response.choices[0].message.content.strip()
+
+async def async_generate_communication_plan(reference_text, rfp_text):
+    client = async_client
+    condensed_context = await get_condensed_context(client, reference_text, rfp_text)
+
+    prompt = get_communication_plan_prompt(reference_text, condensed_context)
+
+    response = await client.chat.completions.create(
+        model="gpt-4o",
+        temperature=0.3,
+        max_tokens=2500,
+        messages=[{"role": "user", "content": prompt}]
+    )
+    return response.choices[0].message.content.strip()
+
 
 # --- Conditional Logic ---
 def main():
@@ -619,7 +768,8 @@ def main():
                         objective_text=objective,
                         scope_text=scope_text,
                         resource_schedule_text=resource_schedule_text,
-                        communication_plan_text=communication_plan_text
+                        communication_plan_text=communication_plan_text,
+                        awards_image_path="Images/Crave Awards.png" 
                     )
 
                     buffer = BytesIO()

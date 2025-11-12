@@ -9,3 +9,5 @@ __pycache__/
 *.log
 app.py
 new_app.py
+Coreassess_prompt.txt
+common_ui.py
