@@ -365,7 +365,7 @@ def generate_selected_sections(client, model_name, client_name, selected_section
 # ========================================
 
 def main():
-    st.title("🌐 AI — SOW Generator")
+    st.title("🌐 HANA EE — SOW Generator")
     st.caption("✨ Restructured sections with selective generation")
     
     # Initialize session state
@@ -375,13 +375,6 @@ def main():
     # Client name input
     client_name = st.text_input("Enter Client Name (required)", "")
 
-    # # File upload
-    # uploaded_file = st.file_uploader(
-    #     "Upload RFP Document",
-    #     type=["pdf", "docx", "xlsx", "pptx"],
-    #     key="rfp_uploader",
-    #     help="Upload PDF, Word, Excel or PowerPoint reference document.",
-    # )
 
     # Azure LLM client
     client = AzureOpenAI(
@@ -394,19 +387,6 @@ def main():
     st.session_state["llm_client"] = client
     st.session_state["llm_model"] = model_name
 
-    # Extract and process uploaded file
-    # if uploaded_file and "reference_text" not in st.session_state:
-    #     raw_text = extract_text_from_file(uploaded_file)
-    #     extracted_items = []
-    #     st.success(f"✅ Extracted {len(raw_text.split())} words")
-
-    #     # Store reference text
-    #     if len(raw_text.split()) > 3500:
-    #         st.session_state["reference_text"] = summarize_large_rfp(client, model_name=model_name, text=raw_text)
-    #     else:
-    #         st.session_state["reference_text"] = raw_text
-
-    # reference_text = st.session_state.get("reference_text", "")
 
     # ========================================
     # V2 RESTRUCTURED SECTION SELECTION
@@ -556,7 +536,7 @@ def main():
         st.download_button(
             label="📥 Download Final SOW Document",
             data=buffer,
-            file_name=f"AI_SOW_V2_{datetime.now().strftime('%Y%m%d_%H%M')}.docx",
+            file_name=f"HANA_EE_SOW_V2_{datetime.now().strftime('%Y%m%d_%H%M')}.docx",
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         )
 

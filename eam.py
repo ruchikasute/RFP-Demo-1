@@ -1,54 +1,75 @@
 
-
 def generate_all_sections(client, model_name, reference_text, client_name):
 
     prompt = f"""
-You are a Senior SAP GTS Consultant from Crave InfoTech.
-
-Generate ALL 8 sections of an GTS SOW.
+You are a Senior SAP EAM Consultant from Crave InfoTech.
 
 Client: {client_name}
 
-REFERENCE SOW STYLE GUIDE:
-{st.session_state['knowledge_text']}
+Use ONLY the factual information from below reference text:
 
-Use this as reference:
+REFERENCE:
 {reference_text}
 
+Write the following SOW sections using clean consulting language.
+Do NOT generate any content that is not supported by the reference text.
 
 STRICT RULES:
-- Output ONLY the 8 sections.
-- Follow EXACT tag structure.
-- No extra text outside tags.
+- First line of each section must NOT start with #, ## or ###.
+- Use bullets only when necessary.
+- No invented technical details.
+- Keep wording compact and business-oriented.
+- Bullets must use "- ".
+- Headings must use only numbered headings (3.1, 4.1 etc.)
 
 =====================================
-OUTPUT FORMAT (FOLLOW EXACTLY)
+OUTPUT FORMAT (FOLLOW EXACT TAGS)
 =====================================
 
 <EXEC_SUMMARY>
-[content]
+Write 2–3 business paragraphs.
 
 <ABOUT_CRAVE>
-[content]
+Write 2–3 paragraphs about Crave EAM capabilities.
 
 <ABOUT_CLIENT>
-[content]
+Write:
+3.1 About {client_name}
+(2 paragraphs)
+3.2 Business Verticals
+(List 2–3 verticals + 4 bullets each from reference)
+3.3 Challenges & Objectives
+(2 paragraphs)
 
 <PROJECT_SCOPE>
-[content]
+Write:
+4.1 Introduction (2–3 paragraphs)
+4.2 Scope of Work (bullets)
+4.3 Out of Scope
+4.4 Deliverables
+
+<PROPOSED_SOLUTION>
+Create a table: requirement | feature | description | solution
+Extract data ONLY from the reference text.
 
 <DELIVERY_APPROACH>
-[content]
+1–2 paragraphs
 
 <RESOURCE_TIMELINE>
-Write a SINGLE short narrative paragraph (3–5 lines).
+Short paragraph
 
 <SIGN_OFF>
-[content]
+Short closing paragraph
 
 <KEY_ASSUMPTIONS>
-[content]
+Bulleted assumptions
 
+=====================================
+IMPORTANT
+=====================================
+- Output MUST contain EXACTLY these tags.
+- Nothing outside tags.
+- No markdown headings except numbered ones.
 """
 
     response = client.chat.completions.create(
@@ -65,13 +86,17 @@ Write a SINGLE short narrative paragraph (3–5 lines).
         "About Crave InfoTech": extract_block("ABOUT_CRAVE", full_output),
         "About Client": extract_block("ABOUT_CLIENT", full_output),
         "Project Scope": extract_block("PROJECT_SCOPE", full_output),
+        "Proposed Solution": extract_block("PROPOSED_SOLUTION", full_output),
         "Project Delivery Approach": extract_block("DELIVERY_APPROACH", full_output),
         "Resource Allocation & Timelines": extract_block("RESOURCE_TIMELINE", full_output),
         "Sign Off": extract_block("SIGN_OFF", full_output),
         "Key Assumptions": extract_block("KEY_ASSUMPTIONS", full_output),
     }
 
+
     return extracted
+
+
 
 
 import streamlit as st
@@ -127,7 +152,7 @@ if "knowledge_text" not in st.session_state:
 from concurrent.futures import ThreadPoolExecutor
 from pptx import Presentation
 def main():
-    st.title("🌐 GTS — SOW Generator")
+    st.title("🌐 EAM — SOW Generator")
 
     # Initialize vector DB only first time
     if "vector_db_ready" not in st.session_state:
@@ -178,7 +203,7 @@ def main():
 
         st.success(f"Extracted {len(raw_text.split())} words")
 
- 
+        
         # ---------------------------------------------------------
         # CLEAN SUMMARY UI (instead of 10 messages)
         # ---------------------------------------------------------
@@ -218,8 +243,6 @@ def main():
             st.warning("⚠ Please upload an RFP first.")
             return
 
-        st.info("⏳ Generating all sections...")
-
         # LLM call
 
         with st.spinner("⏳ Generating all SOW sections..."):
@@ -229,7 +252,7 @@ def main():
         # ---------------------------------------------------------
         # STEP 1 — Build FINAL processed document in memory
         # ---------------------------------------------------------
-        template_path = "Template/GTS_Template.docx"
+        template_path = "Template/EAM_Template.docx"
         
         # ---------------------------------------------------------
         # STEP 3 — Build preview sections
@@ -240,11 +263,13 @@ def main():
             ("About Crave InfoTech", "About Crave InfoTech"),
             ("About Client", "About Client"),
             ("Project Scope", "Project Scope"),
+            ("Proposed Solution", "Proposed Solution"),
             ("Project Delivery Approach", "Project Delivery Approach"),
             ("Resource Allocation & Timelines", "Resource Allocation & Timelines"),
             ("Sign Off", "Sign Off"),
             ("Key Assumptions", "Key Assumptions"),
         ]
+
 
         st.session_state["edited_sections"] = []
 
@@ -293,7 +318,7 @@ def main():
         # Generate file only when user clicks Download
         buffer = io.BytesIO()
 
-        template_path = "Template/GTS_Template.docx"
+        template_path = "Template/EAM_Template.docx"
         final_doc = Document(template_path)
 
         # Basic replacements
@@ -308,11 +333,14 @@ def main():
             "About Crave InfoTech": "<ABOUT_CRAVE>",
             "About Client": "<ABOUT_CLIENT>",
             "Project Scope": "<PROJECT_SCOPE>",
+            "Proposed Solution": "<PROPOSED_SOLUTION>",
             "Project Delivery Approach": "<DELIVERY_APPROACH>",
             "Resource Allocation & Timelines": "<RESOURCE_TIMELINE>",
             "Sign Off": "<SIGN_OFF>",
             "Key Assumptions": "<KEY_ASSUMPTIONS>"
         }
+
+
 
         for sec in st.session_state["edited_sections"]:
             title = sec["title"]
@@ -322,7 +350,7 @@ def main():
                 # insert_plain_preview(final_doc, placeholder_map[title], content)
 
 
-  
+       
         # 🔥 Save into buffer
         final_doc.save(buffer)
         buffer.seek(0)
@@ -331,6 +359,6 @@ def main():
         st.download_button(
             label="📥 Download Final SOW Document",
             data=buffer,
-            file_name=f"GTS_SOW_{datetime.now().strftime('%Y%m%d_%H%M')}.docx",
+            file_name=f"EAM_SOW_{datetime.now().strftime('%Y%m%d_%H%M')}.docx",
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         )

@@ -1,791 +1,473 @@
 import streamlit as st
-import os
-import time
-import re
-from io import BytesIO
-from dotenv import load_dotenv
-from PyPDF2 import PdfReader
-import docx
-from docx import Document
 from openai import AzureOpenAI
-from langchain_openai import AzureOpenAIEmbeddings
-from langchain_core.documents import Document as LDocument
-from docx.shared import Inches, RGBColor
-from docx.oxml import OxmlElement
-from docx.oxml.ns import qn
-from docx.shared import Pt
-from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.enum.table import WD_ALIGN_VERTICAL
-from Modules.prompts import (
-    get_executive_summary_and_objective_prompt,
-    get_scope_prereq_assumptions_prompt,
-    get_resource_schedule_and_commercial_prompt,
-    get_communication_plan_prompt
+import os, io, re
+from datetime import datetime
+from docx import Document
+from Modules.startup import init
+init("Integration")   # <-- single line to initialize everything
+
+# ------------------------------
+# IMPORT ALL EXISTING FUNCTIONS
+# ------------------------------
+
+from Modules.extractors import (
+    extract_text_from_file,
+    summarize_large_rfp,
+    extract_image_from_slide,
+    extract_table_from_slide,
+    extract_slide7_summary,
+    extract_total_interfaces_from_slide,
+    extract_block
 )
-import asyncio
-import concurrent.futures
-import aiohttp
-from openai import AsyncAzureOpenAI
+
+from Modules.word_insert import (
+    insert_formatted_text,
+    insert_plain_preview,
+    insert_markdown_table_after,
+    insert_image_at_placeholder,
+    _create_paragraph_after,
+)
+
+from Modules.placeholders import (
+    replace_client_name_in_doc,
+    replace_submission_date,
+    replace_inline_placeholder,
+    insert_document_number,
+    generate_document_number,
+)
+
+from Modules.knowledge import load_knowledge_text
+from Modules.llm import (
+    regenerate_section_llm
+)
+
+from Modules.preview import (
+    section_preview_tabs,
+    md_to_html
+)
+def extract_section(text, heading, all_headings):
+    # remove current heading from next-head list
+    filtered = [h for h in all_headings if h != heading]
+    escaped = [re.escape(h) for h in filtered]
+    next_heads = "|".join(escaped)
+
+    # match heading at start of a line + grab until next heading
+    pattern = rf"^{re.escape(heading)}\s*\n(.*?)(?=^({next_heads})\s*$|\Z)"
+    match = re.search(pattern, text, re.DOTALL | re.MULTILINE)
+    return match.group(1).strip() if match else ""
 
 
 
-# -------------------------------------------------------
-# 1. SETUP
-# -------------------------------------------------------
-load_dotenv()
-KNOWLEDGE_FOLDER = "Knowledge_Repo"
-PERSIST_DIR = "chroma_db"
+def generate_all_sections(client, model_name, reference_text, client_name):
 
-# ---- Shared Async Azure Client + Caching ----
-@st.cache_resource
-def get_azure_client():
-    """Create and cache Async Azure OpenAI client"""
-    return AsyncAzureOpenAI(
+    prompt = f"""
+You are a Senior SAP Integration Consultant from Crave InfoTech.
+
+Generate a complete SAP PI/PO → SAP Integration Suite Migration Statement of Work (SOW)
+following the EXACT structure below.
+
+Client: {client_name}
+
+REFERENCE SOW STYLE GUIDE:
+{st.session_state.get("knowledge_text", "")}
+
+Use this as reference:
+{reference_text}
+
+REAL INTERFACE COUNT (must be used everywhere):
+Total Interfaces Identified: {st.session_state.get("total_interfaces", "UNKNOWN")}
+
+STRICT RULES:
+- ALWAYS use the above Total Interfaces value.
+- NEVER invent or assume a different number.
+- NEVER use example numbers from the knowledge repository.
+- DO NOT repeat content already present in the template (Team Structure, Architecture Diagram, Pricing tables, etc.)
+- Follow EXACT tag structure.
+- No extra text outside tags.
+
+===========================================================
+FINAL OUTPUT STRUCTURE (FOLLOW EXACTLY)
+===========================================================
+
+Executive Summary
+Write a strong executive summary with 300 words covering:
+- The purpose of the SOW  
+- Overall Migration Approach  
+- Summary of deliverables  
+- Total interfaces ({st.session_state.get("total_interfaces", "UNKNOWN")})  
+
+About Crave InfoTech  
+A concise section describing Crave InfoTech’s capabilities, accelerators,
+SAP expertise, and integration migration experience.
+
+Our Understanding of the Client Solution 
+3.1 Situation  
+- Current PI/PO landscape summary  
+- Client’s current middleware challenges  
+- Need for modernization / cloud-first alignment  
+   
+3.2 Objectives  
+- What the client wants to achieve through this migration  
+- Modernization, reduced TCO, better monitoring, scalability  
+
+3.3 Challenges They Are Facing  
+- Technical, operational, compliance, and performance pain points  
+- Any migration blockers typically seen in PI/PO → IS projects  
+
+Project Scope
+4.1 Proposed Solution  
+- Describe our proposed Integration Suite migration solution  
+- Key features and capabilities  
+- Use of OData, APIs, CPI flows, BTP services, monitoring, etc.  
+
+4.2 Acceptance Criteria
+- Clear, verifiable acceptance standards  
+
+4.3 Deliverables 
+- All deliverables of this migration project  
+- Artifacts, configuration, documentation, testing outputs  
+
+4.4 Out of Scope 
+- Explicit list of exclusions  
+
+Solution Details
+- Architecture diagram is already in the template (DO NOT regenerate)  
+5.1 Bill of Material (BOM)  
+- List all required components, licenses, environments (but no pricing)  
+
+Project Approach
+(Template includes a 4–5 step image — DO NOT regenerate the image)  
+Write a narrative explanation covering:  
+- Discovery  
+- Assessment  
+- Migration  
+- Validation  
+- Go-Live & Support  
+Include how extracted technical tables (integration inventory, complexity, 
+classifications, etc.) integrate into these steps.
+
+Team Structure
+(Already in template — DO NOT recreate)  
+Write a short narrative describing roles & responsibilities that align with
+the existing template structure.
+
+Timeline
+- The project plan image will be placed by the template (DO NOT generate)  
+- Write a narrative summary explaining the phases and duration in general terms.
+
+Commercials & Pricing
+(Pricing tables and payment terms are already in the template — DO NOT recreate)  
+Write a short explanation on how pricing is structured (without values).
+
+Sign-0FF
+[content]
+
+Key Assumptions
+Provide a professional list of assumptions applicable to PI/PO → IS migration.
+
+"""
+
+    response = client.chat.completions.create(
+        model=model_name,
+        messages=[{"role":"user","content":prompt}],
+        temperature=0.4
+    )
+
+    full_output = response.choices[0].message.content.strip()
+    headings = [
+    "Executive Summary",
+    "About Crave InfoTech",
+    "Our Understanding of the Client Solution",
+    "Project Scope",
+    "Solution Details",
+    "Project Approach",
+    "Team Structure",
+    "Timeline",
+    "Commercials & Pricing",
+    "Key Assumptions"
+]
+
+
+
+    # EXTRACT each block
+    extracted = {
+        "Executive Summary": extract_section(full_output, "Executive Summary", headings),
+        "About Crave InfoTech": extract_section(full_output, "About Crave InfoTech", headings),
+        "Our Understanding": extract_section(full_output, "Our Understanding of the Client Solution", headings),
+        "Project Scope": extract_section(full_output, "Project Scope", headings),
+        "Solution Details": extract_section(full_output, "Solution Details", headings),
+        "Project Delivery Approach": extract_section(full_output, "Project Approach", headings),
+        "Team Structure": extract_section(full_output, "Team Structure", headings),
+        "Resource Allocation & Timelines": extract_section(full_output, "Timeline", headings),
+        "Commercials": extract_section(full_output, "Commercials & Pricing", headings),
+        "Key Assumptions": extract_section(full_output, "Key Assumptions", headings),
+    }
+
+
+
+    return extracted
+
+
+
+def main():
+    st.title("🌐 Integration — SOW Generator")
+
+    
+    # Initialize keys early (safe even if they exist)
+    st.session_state.setdefault("llm_client", None)
+    st.session_state.setdefault("llm_model", None)
+
+    # -------------------------------
+    # Client name input + RFP upload
+    # -------------------------------
+    client_name = st.text_input("Enter Client Name (required)", "")
+
+    uploaded_file = st.file_uploader(
+        " ",
+        type=["pdf", "docx", "xlsx", "pptx"],
+        key="rfp_uploader",
+        help="Upload PDF, Word, Excel or PowerPoint reference document.",
+        label_visibility="collapsed"
+    )
+
+    # Azure LLM client
+    client = AzureOpenAI(
         azure_endpoint=os.getenv("AZURE_OPENAI_FRFP_ENDPOINT"),
         api_key=os.getenv("AZURE_OPENAI_FRFP_KEY"),
         api_version=os.getenv("AZURE_OPENAI_FRFP_VERSION")
     )
+    model_name = "gpt-4o-mini"
 
-async_client = get_azure_client()
-
-
-st.set_page_config(page_title="RFP Proposal AI Generator", layout="wide")
-
-# Custom CSS for Professional Look (Mimics AutoRFP style)
-st.markdown("""
-<style>
-/* Primary Brand Color */
-:root {
-    --primary-blue: #1A75E0;
-    --light-blue-bg: #EAF3FF;
-}
-
-/* Centering and large text for the main header */
-.main-header {
-    text-align: center;
-    color: #000;
-    font-size: 3em;
-    font-weight: 800;
-    padding-top: 20px;
-    padding-bottom: 5px;
-}
-.highlight-text {
-    color: var(--primary-blue);
-}
-.sub-tagline {
-    text-align: center;
-    color: #555;
-    font-size: 1.1em;
-    padding-bottom: 40px;
-}
-
-/* Style for the upload boxes (the two blocks requested) */
-.upload-card {
-    border: 1px solid #E0E0E0;
-    border-radius: 12px;
-    padding: 30px 20px;
-    text-align: center;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
-    transition: all 0.2s ease-in-out;
-    background-color: #F9F9F9;
-    height: 100%;
-    margin-bottom: 20px;
-}
-.upload-card:hover {
-    box-shadow: 0 8px 16px rgba(0, 0, 0, 0.1);
-    border-color: var(--primary-blue);
-}
-.upload-header {
-    color: var(--primary-blue);
-    font-weight: 600;
-    margin-bottom: 10px;
-}
-
-/* Streamlit component tweaks */
-div.stButton > button {
-    background-color: var(--primary-blue);
-    color: white;
-    border-radius: 8px;
-    border: none;
-    padding: 10px 20px;
-    font-weight: bold;
-    transition: background-color 0.2s;
-}
-div.stButton > button:hover {
-    background-color: #145CB0;
-}
-/* Style status box titles for consistency */
-.stStatus [data-testid="stStatusContainer"] > div:first-child > div:first-child {
-    font-weight: 600;
-    color: #333;
-}
-</style>
-""", unsafe_allow_html=True)
+    # Store globally (MUST be before using them)
+    st.session_state["llm_client"] = client
+    st.session_state["llm_model"] = model_name
 
 
-# -------------------------------------------------------
-# 2. UTILITIES
-# -------------------------------------------------------
-# --- Helper: Condensed Context ---
-async def get_condensed_context(client, reference_text, rfp_text):
-    """Summarize RFP + reference text into compact context for faster, stable LLM calls."""
-    condense_prompt = f"""
-    You are a professional SAP proposal analyst.
-    Summarize the following RFP and reference text into about 800–1000 tokens.
-    Include:
-    - Project purpose
-    - Scope
-    - Objectives
-    - Detected technologies and tone
-    ---
-    RFP TEXT:
-    {rfp_text[:7000]}
+    # -------------------------------------------------------------
+    # EXTRACT + SUMMARIZE (only once) — CLEAN UI VERSION
+    # -------------------------------------------------------------
+    if uploaded_file and "reference_text" not in st.session_state:
 
-    REFERENCE MATERIAL:
-    {reference_text[:4000]}
-    """
+        raw_text = extract_text_from_file(uploaded_file)
 
-    response = await client.chat.completions.create(
-        model="gpt-4o",
-        temperature=0.3,
-        max_tokens=1200,
-        messages=[{"role": "user", "content": condense_prompt}]
-    )
-    return response.choices[0].message.content.strip()
+        # Store extracted items for compact UI display
+        extracted_items = []
+
+        st.success(f"Extracted {len(raw_text.split())} words")
+
+        # ---------------------------------------------------------
+        # PPT EXTRACTIONS (image, tables, bullets, numeric counts)
+        # ---------------------------------------------------------
+        if uploaded_file.name.lower().endswith(".pptx"):
+
+            # Slide 17 image
+            img = extract_image_from_slide(uploaded_file, 17)
+            if img:
+                image_blob, ext = img
+                st.session_state["slide17_image"] = image_blob
+                extracted_items.append("📸 Image (Slide 17)")
+
+            # Table from slide 9
+            table_md = extract_table_from_slide(uploaded_file, 9)
+            if table_md:
+                st.session_state["slide9_table"] = table_md
+                extracted_items.append("📊 Table (Slide 9)")
+
+            # Table from slide 8
+            table_md_8 = extract_table_from_slide(uploaded_file, 8)
+            if table_md_8:
+                st.session_state["slide8_table"] = table_md_8
+                extracted_items.append("📊 Table (Slide 8)")
+
+            # Slide 7 summary bullets
+            slide7_summary = extract_slide7_summary(uploaded_file)
+            if slide7_summary:
+                st.session_state["slide7_text"] = slide7_summary
+                extracted_items.append("📝 Summary bullets (Slide 7)")
+
+            # Slide 5 — total interface count
+            total = extract_total_interfaces_from_slide(uploaded_file, slide_number=5)
+            if total:
+                st.session_state["total_interfaces"] = total
+                extracted_items.append(f"🔢 Interface count: {total}")
+
+            # Slide 18 — resources table
+            table_md_18 = extract_table_from_slide(uploaded_file, 18)
+            if table_md_18:
+                st.session_state["slide18_resources_table"] = table_md_18
+                extracted_items.append("👥 Resources table (Slide 18)")
+
+
+        # ---------------------------------------------------------
+        # CLEAN SUMMARY UI (instead of 10 messages)
+        # ---------------------------------------------------------
+        if extracted_items:
+            st.markdown("### 📎 Extracted assets")
+            for item in extracted_items:
+                st.markdown(f"- {item}")
+
+        # ---------------------------------------------------------
+        # Store reference text
+        # ---------------------------------------------------------
+        if len(raw_text.split()) > 3500:
+            st.session_state["reference_text"] = summarize_large_rfp(
+                client,
+                model_name=model_name,
+                text=raw_text
+            )
+        else:
+            st.session_state["reference_text"] = raw_text
+
+    reference_text = st.session_state.get("reference_text", "")
+
+    # -------------------------------------------------------------
+    # GENERATE ALL SECTIONS IN PARALLEL
+    # -------------------------------------------------------------
+    # if st.button("⚡ Generate SOW"):
+    if st.button("⚡ Generate SOW"):
+        st.session_state.pop("edited_sections", None)
+
+        # Reset old editor text areas
+        for key in list(st.session_state.keys()):
+            if key.startswith("editor_"):
+                st.session_state.pop(key)
+
+
+        if not reference_text:
+            st.warning("⚠ Please upload an RFP first.")
+            return
+
+
+        # LLM call
+
+        with st.spinner("⏳ Generating all SOW sections..."):
+            all_sections = generate_all_sections(client, model_name, reference_text, client_name)
+
+
+        # ---------------------------------------------------------
+        # STEP 1 — Build FINAL processed document in memory
+        # ---------------------------------------------------------
+        template_path = "Template/Integration_Template.docx"
+        
+        # ---------------------------------------------------------
+        # STEP 3 — Build preview sections
+        # ---------------------------------------------------------
+
+        titles_and_keys = [
+            ("Executive Summary", "Executive Summary"),
+            ("About Crave InfoTech", "About Crave InfoTech"),
+            ("Our Understanding", "Our Understanding"),
+            ("Project Scope", "Project Scope"),
+            ("Project Delivery Approach", "Project Delivery Approach"),
+            ("Resource Allocation & Timelines", "Resource Allocation & Timelines"),
+            ("Sign Off", "Sign Off"),
+            ("Key Assumptions", "Key Assumptions"),
+        ]
+
+        st.session_state["edited_sections"] = []
+
+        for title, key in titles_and_keys:
+            content = all_sections.get(key, "").strip()
+            if not content:
+                content = f"(No content generated for '{title}')"
+
+                # 🔥 1. REMOVE TAGS LIKE <ABOUT>, <PROJECT_SCOPE>
+            content = re.sub(r"<\/?[^>]+>", "", content).strip()
+
+            st.session_state["edited_sections"].append(
+                {"title": title, "content": content}
+            )
+
+ 
+        pass
+
+
+        # clear regeneration flag
+        st.session_state.pop("regen_success", None)
 
 
 
-def extract_text(file):
-    """Extract text from PDF or DOCX"""
-    if file.name.endswith(".pdf"):
-        reader = PdfReader(file)
-        return "\n".join([p.extract_text() or "" for p in reader.pages])
-    elif file.name.endswith(".docx"):
-        doc = docx.Document(file)
-        return "\n".join([p.text for p in doc.paragraphs])
-    return ""
+    # -------------------------------------------------------------
+    # SHOW ALL EDITABLE TABS
+    # -------------------------------------------------------------
+    if "edited_sections" in st.session_state:
+        section_preview_tabs()
 
 
-from pinecone import Pinecone, ServerlessSpec
-from langchain_pinecone import PineconeVectorStore
-from langchain_community.embeddings import HuggingFaceEmbeddings
-import os
+    # -------------------------------------------------------------
+    # DOWNLOAD FINAL SOW DOCX
+    # -------------------------------------------------------------
+    if "edited_sections" in st.session_state:
 
-@st.cache_resource
-def build_knowledge_base(folder="Knowledge_Repo"):
-    embedding_model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+        # Generate file only when user clicks Download
+        buffer = io.BytesIO()
 
-    pc = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
-    index_name = "response-generator"
+        template_path = "Template/Integration_Template.docx"
+        final_doc = Document(template_path)
 
-    # Create index if it doesn't exist
-    if index_name not in [idx["name"] for idx in pc.list_indexes()]:
-        pc.create_index(
-            name=index_name,
-            dimension=384,  # ✅ MiniLM-L6-v2 has 384 dims (not 1024)
-            metric="cosine",
-            spec=ServerlessSpec(cloud="aws", region="us-east-1")
+        # Basic replacements
+        replace_client_name_in_doc(final_doc, client_name)
+        replace_submission_date(final_doc)
+        doc_no = generate_document_number(client_name)
+        insert_document_number(final_doc, "<DOCUMENT_NO>", doc_no)
+
+
+        placeholder_map = {
+            "Executive Summary": "<EXEC_SUMMARY>",
+            "About Crave InfoTech": "<ABOUT_CRAVE>",
+            "Our Understanding": "<OUR_SOL>",
+            "Project Scope": "<PROJECT_SCOPE>",
+            "Project Delivery Approach": "<DELIVERY_APPROACH>",
+            "Resource Allocation & Timelines": "<RESOURCE_TIMELINE>",
+            "Key Assumptions": "<KEY_ASSUMPTIONS>",
+        }
+
+        for sec in st.session_state["edited_sections"]:
+            title = sec["title"]
+            content = sec["content"]
+            if title in placeholder_map:
+                insert_formatted_text(final_doc, placeholder_map[title], content)
+
+
+
+        # for sec in st.session_state["edited_sections"]:
+        #     title = sec["title"]
+        #     content = sec["content"]
+        #     if title in placeholder_map:
+        #         insert_formatted_text(final_doc, placeholder_map[title], content)
+        #         # insert_plain_preview(final_doc, placeholder_map[title], content)
+
+
+        # Insert PPT assets
+        if "slide17_image" in st.session_state:
+            insert_image_at_placeholder(final_doc, "<PPT_IMAGE>", st.session_state["slide17_image"])
+
+        if "slide8_table" in st.session_state:
+            insert_formatted_text(final_doc, "<ADAPTER_TABLE>", st.session_state["slide8_table"])
+
+        if "slide9_table" in st.session_state:
+            insert_formatted_text(final_doc, "<KEY_TABLE>", st.session_state["slide9_table"])
+
+        if "slide7_text" in st.session_state:
+            insert_formatted_text(final_doc, "<SLIDE7_TEXT>", st.session_state["slide7_text"])
+
+        if "slide18_resources_table" in st.session_state:
+            insert_formatted_text(final_doc, "<RESOURCES_TABLE>", st.session_state["slide18_resources_table"])
+
+        if "total_interfaces" in st.session_state:
+            replace_inline_placeholder(final_doc, "<TOTAL_INTERFACES>", st.session_state["total_interfaces"])
+
+        # 🔥 Save into buffer
+        final_doc.save(buffer)
+        buffer.seek(0)
+
+        # 🔥 Actual download button
+        st.download_button(
+            label="📥 Download Final SOW Document",
+            data=buffer,
+            file_name=f"Integration_SOW_{datetime.now().strftime('%Y%m%d_%H%M')}.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         )
 
-    index = pc.Index(index_name)
 
-    vector_store = PineconeVectorStore(index=index, embedding=embedding_model)
 
-    # --- Upload documents if index is empty ---
-    stats = pc.describe_index(index_name)
-    if stats.get("status", {}).get("ready", False):
-        # Load local RFP references
-        docs = []
-        for file in os.listdir(folder):
-            if file.endswith((".pdf", ".docx")):
-                path = os.path.join(folder, file)
-                text = extract_text(open(path, "rb"))
-                if text.strip():
-                    docs.append(LDocument(page_content=text, metadata={"source": file}))
-
-        if docs:
-            vector_store.add_documents(docs)
-            print(f"✅ Uploaded {len(docs)} docs to Pinecone index '{index_name}'")
-
-    return vector_store
-
-
-
-def apply_bullet_to_para(paragraph, list_id='1'):
-    """
-    Applies a dot bullet style (list level 0) using its XML structure.
-    Uses numId='1' which is often the default bullet style in templates.
-    """
-    pPr = paragraph._element.get_or_add_pPr()
-    numPr = OxmlElement('w:numPr')
-    
-    # Set the list level (0 is the main level)
-    ilvl = OxmlElement('w:ilvl')
-    ilvl.set(qn('w:val'), '0')
-    
-    # Set the list ID (Most default templates use ID '1' for the first bullet definition)
-    numId = OxmlElement('w:numId')
-    numId.set(qn('w:val'), list_id)
-    
-    numPr.append(ilvl)
-    numPr.append(numId)
-    pPr.append(numPr)
-
-
-def insert_executive_summary_into_template(
-    template_path,
-    summary_text,
-    objective_text=None,
-    scope_text=None,
-    resource_schedule_text=None,
-    communication_plan_text=None,
-    awards_image_path=None, 
-):
-    """
-    Replace placeholders in the template:
-    <<EXEC_SUMMARY>>, <<OBJECTIVE>>, <<SCOPE_TEXT>>, <<RESOURCE_SCHEDULE>>, <<COMMUNICATION_PLAN>>
-    Now includes robust bullet point handling.
-    """
-
-    doc = Document(template_path)
-
-    def set_cell_shading(cell, fill_color):
-        """Add shading (background color) to a table cell."""
-        tc_pr = cell._element.tcPr
-        shd = OxmlElement("w:shd")
-        shd.set(qn("w:val"), "clear")
-        shd.set(qn("w:color"), "auto")
-        shd.set(qn("w:fill"), fill_color)
-        tc_pr.append(shd)
-
-    def set_table_border_white(table, cell_margin=150):
-        """Set all table borders to white (for clean, minimal look)."""
-        tbl = table._element
-        tbl_pr = tbl.tblPr
-        tbl_borders = OxmlElement("w:tblBorders")
-
-        for border_name in ["top", "left", "bottom", "right", "insideH", "insideV"]:
-            border_el = OxmlElement(f"w:{border_name}")
-            border_el.set(qn("w:val"), "single")
-            border_el.set(qn("w:sz"), "4")  # thin border
-            border_el.set(qn("w:space"), "0")
-            border_el.set(qn("w:color"), "FFFFFF")  # white
-            tbl_borders.append(border_el)
-
-        tbl_pr.append(tbl_borders)
-
-
-    def insert_styled_table(parent, headers, rows):
-        """Create a table styled similar to RFP objective section."""
-        table = parent.add_table(rows=len(rows) + 1, cols=len(headers))
-        table.style = "Table Grid"
-        table.autofit = True
-
-        # Header row styling
-        hdr_cells = table.rows[0].cells
-        for i, h in enumerate(headers):
-            hdr_cells[i].text = h.strip()
-            set_cell_shading(hdr_cells[i], "008FD3")  # blue header
-            for run in hdr_cells[i].paragraphs[0].runs:
-                run.font.bold = True
-                run.font.color.rgb = RGBColor(255, 255, 255)
-            hdr_cells[i].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.LEFT
-            hdr_cells[i].vertical_alignment = WD_ALIGN_VERTICAL.CENTER
-
-        # Data rows
-        for r, row_data in enumerate(rows):
-            cells = table.rows[r + 1].cells
-            for c, val in enumerate(row_data):
-                cells[c].text = str(val).strip()
-                set_cell_shading(cells[c], "E7EEF7")  # light gray row
-                cells[c].vertical_alignment = WD_ALIGN_VERTICAL.CENTER
-                cells[c].paragraphs[0].alignment = (
-                    WD_ALIGN_PARAGRAPH.LEFT if c == 0 else WD_ALIGN_PARAGRAPH.LEFT
-                )
-
-        # Set uniform width
-        for row in table.rows:
-            for cell in row.cells:
-                cell.width = Inches(3)
-
-        # Apply white borders
-        set_table_border_white(table)
-
-        return table
-
-    def replace_placeholder(doc, placeholder, new_text):
-        if not new_text:
-            return
-
-        for para in doc.paragraphs:
-            if placeholder in "".join(run.text for run in para.runs):
-                parent = para._element.getparent()
-                idx = parent.index(para._element)
-                parent.remove(para._element)
-
-                lines = [line.strip() for line in new_text.split("\n") if line.strip()]
-                new_elements = []  # collect to insert once
-
-                i = 0
-                while i < len(lines):
-                    line = lines[i]
-
-                    # Markdown-style table
-                    if line.startswith("|") and "|" in line:
-                        table_lines = []
-                        while i < len(lines) and lines[i].startswith("|"):
-                            table_lines.append(lines[i])
-                            i += 1
-                        headers = [h.strip("* ") for h in table_lines[0].strip("|").split("|")]
-                        rows = [
-                            [c.strip() for c in r.strip("|").split("|")]
-                            for r in table_lines[2:]
-                        ]
-                        table = insert_styled_table(doc, headers, rows)
-                        new_elements.append(table._element)
-                        continue
-
-                    # Section heading
-                    if line.startswith("**") or line.startswith("###"):
-                        header_text = line.strip("*# ").rstrip(":")
-                        new_para = doc.add_paragraph(header_text)
-                        new_para.style = "Table Column Heading"
-                        new_para.paragraph_format.space_after = Pt(4)
-                        new_elements.append(new_para._element)
-                        i += 1
-                        continue
-
-                    # Markdown bullets (FIXED: Use apply_bullet_to_para for robustness)
-                    if line.startswith("- ") or line.startswith("• "):
-                        bullet_text = line[2:].strip() if line.startswith("- ") else line[1:].strip()
-                        new_para = doc.add_paragraph(bullet_text, style="List Bullet 2")
-                        new_para.paragraph_format.left_indent = Pt(18)
-                        new_para.paragraph_format.space_after = Pt(2)
-                        new_elements.append(new_para._element)
-                        i += 1
-                        continue
-
-                    # Regular text
-                    new_para = doc.add_paragraph(line)
-                    new_elements.append(new_para._element)
-                    i += 1
-
-                # ⚡️ Insert all new elements once
-                for element in reversed(new_elements):
-                    parent.insert(idx, element)
-                return
-
-    def insert_image_at_placeholder(doc, placeholder, image_path, width_inches=5):
-        """
-        Finds a paragraph with the given placeholder text (even inside tables)
-        and replaces it with an image.
-        """
-        if not image_path or not os.path.exists(image_path):
-            print(f"⚠️ Image not found at {image_path}")
-            return
-
-        def replace_in_paragraphs(paragraphs):
-            for para in paragraphs:
-                if placeholder in para.text:
-                    parent = para._element.getparent()
-                    idx = parent.index(para._element)
-                    parent.remove(para._element)
-
-                    # Insert image paragraph
-                    new_para = doc.add_paragraph()
-                    new_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                    run = new_para.add_run()
-                    run.add_picture(image_path, width=Inches(width_inches))
-
-                    parent.insert(idx, new_para._element)
-                    print(f"✅ Inserted image for placeholder {placeholder}")
-                    return True
-            return False
-
-        # 1️⃣ Try paragraphs at the root
-        if replace_in_paragraphs(doc.paragraphs):
-            return
-
-        # 2️⃣ Try paragraphs inside tables
-        for table in doc.tables:
-            for row in table.rows:
-                for cell in row.cells:
-                    if replace_in_paragraphs(cell.paragraphs):
-                        return
-                    
-    # --- Perform replacements and image insertion ---
-    replace_placeholder(doc, "<<EXEC_SUMMARY>>", summary_text)
-    replace_placeholder(doc, "<<OBJECTIVE>>", objective_text)
-    replace_placeholder(doc, "<<SCOPE_TEXT>>", scope_text)
-    replace_placeholder(doc, "<<RESOURCE_SCHEDULE>>", resource_schedule_text)
-    replace_placeholder(doc, "<<COMMUNICATION_PLAN>>", communication_plan_text)
-
-    # ✅ Insert Awards image if provided
-    insert_image_at_placeholder(doc, "<<AWARDS>>", awards_image_path)
-
-    # ✅ Finally return the document
-    return doc
-
-
-# async def async_generate_exec_summary_and_objective(reference_text,rfp_text, num_interfaces=113):
-#     # client = AsyncAzureOpenAI(
-#     #     azure_endpoint=os.getenv("AZURE_OPENAI_FRFP_ENDPOINT"),
-#     #     api_key=os.getenv("AZURE_OPENAI_FRFP_KEY"),
-#     #     api_version=os.getenv("AZURE_OPENAI_FRFP_VERSION")
-#     # )
-#     client = async_client
-
-#     condensed_context = await get_condensed_context(client, reference_text, rfp_text)
-#     prompt = get_executive_summary_and_objective_prompt(condensed_context, num_interfaces)
-
-
-#     # prompt = get_executive_summary_and_objective_prompt(reference_text, condensed_rfp, num_interfaces)
-
-#     response = await client.chat.completions.create(
-#         model="Codetest",
-#         temperature=0.3,
-#         max_tokens=2000,
-#         messages=[{"role": "user", "content": prompt}]
-#     )
-
-#     full_output = response.choices[0].message.content.strip()
-
-#     # Safer regex split
-#     exec_text = ""
-#     obj_text = ""
-
-#     match_exec = re.search(r"(?i)\*\*?Executive Summary\*\*?\s*([\s\S]*?)(?=\*\*?Objective\*\*?)", full_output)
-#     if match_exec:
-#         exec_text = match_exec.group(1).strip()
-
-#     match_obj = re.search(r"(?i)\*\*?Objective\*\*?\s*(.*)", full_output, re.S)
-#     if match_obj:
-#         obj_text = match_obj.group(1).strip()
-
-#     # fallback
-#     if not exec_text:
-#         exec_text = full_output[:len(full_output)//2]
-#     if not obj_text:
-#         obj_text = full_output[len(full_output)//2:]
-
-#     return exec_text, obj_text
-async def async_generate_exec_summary_and_objective(reference_text, rfp_text, num_interfaces=113):
-    client = async_client
-    condensed_context = await get_condensed_context(client, reference_text, rfp_text)
-
-    prompt = get_executive_summary_and_objective_prompt(reference_text, condensed_context, num_interfaces)
-
-    response = await client.chat.completions.create(
-        model="Codetest",
-        temperature=0.3,
-        max_tokens=2000,
-        messages=[{"role": "user", "content": prompt}]
-    )
-
-    full_output = response.choices[0].message.content.strip()
-
-    match_exec = re.search(r"(?i)\bExecutive Summary\b\s*([\s\S]*?)(?=\bObjective\b|$)", full_output)
-    exec_text = match_exec.group(1).strip() if match_exec else full_output[:len(full_output)//2]
-
-    match_obj = re.search(r"(?i)\bObjective\b\s*([\s\S]*)", full_output)
-    obj_text = match_obj.group(1).strip() if match_obj else full_output[len(full_output)//2:]
-
-    return exec_text, obj_text
-
-
-# async def async_generate_scope_sections(reference_text,rfp_text, num_interfaces=None):
-    # client = AsyncAzureOpenAI(
-    #     azure_endpoint=os.getenv("AZURE_OPENAI_FRFP_ENDPOINT"),
-    #     api_key=os.getenv("AZURE_OPENAI_FRFP_KEY"),
-    #     api_version=os.getenv("AZURE_OPENAI_FRFP_VERSION")
-    # )
-    # client = async_client
-
-    # condensed_context = await get_condensed_context(client, reference_text, rfp_text)
-    # prompt = get_scope_prereq_assumptions_prompt(condensed_context, num_interfaces)
-
-
-    # # prompt = get_scope_prereq_assumptions_prompt(reference_text, condensed_rfp, num_interfaces)
-    # response = await client.chat.completions.create(
-    #     model="Codetest", temperature=0.3, max_tokens=1200,
-    #     messages=[{"role": "user", "content": prompt}]
-    # )
-    # return response.choices[0].message.content.strip()
-
-async def async_generate_scope_sections(reference_text, rfp_text, num_interfaces=None):
-    client = async_client
-    condensed_context = await get_condensed_context(client, reference_text, rfp_text)
-
-    prompt = get_scope_prereq_assumptions_prompt(reference_text, condensed_context, num_interfaces)
-
-    response = await client.chat.completions.create(
-        model="Codetest",
-        temperature=0.3,
-        max_tokens=1500,
-        messages=[{"role": "user", "content": prompt}]
-    )
-    return response.choices[0].message.content.strip()
-
-
-# async def async_generate_resource_schedule_and_commercial(reference_text,rfp_text):
-#     # client = AsyncAzureOpenAI(
-#     #     azure_endpoint=os.getenv("AZURE_OPENAI_FRFP_ENDPOINT"),
-#     #     api_key=os.getenv("AZURE_OPENAI_FRFP_KEY"),
-#     #     api_version=os.getenv("AZURE_OPENAI_FRFP_VERSION")
-#     # )
-#     client = async_client
-
-#     condensed_context = await get_condensed_context(client, reference_text, rfp_text)
-#     prompt = get_resource_schedule_and_commercial_prompt(condensed_context)
-
-
-#     # prompt = get_resource_schedule_and_commercial_prompt(reference_text, condensed_rfp)
-#     response = await client.chat.completions.create(
-#         model="Codetest", temperature=0.3, max_tokens=2000,
-#         messages=[{"role": "user", "content": prompt}]
-#     )
-#     return response.choices[0].message.content.strip()
-async def async_generate_resource_schedule_and_commercial(reference_text, rfp_text):
-    client = async_client
-    condensed_context = await get_condensed_context(client, reference_text, rfp_text)
-
-    prompt = get_resource_schedule_and_commercial_prompt(reference_text, condensed_context)
-
-    response = await client.chat.completions.create(
-        model="Codetest",
-        temperature=0.3,
-        max_tokens=2000,
-        messages=[{"role": "user", "content": prompt}]
-    )
-    return response.choices[0].message.content.strip()
-
-
-# async def async_generate_communication_plan(reference_text, rfp_text):
-#     # client = AsyncAzureOpenAI(
-#     #     azure_endpoint=os.getenv("AZURE_OPENAI_FRFP_ENDPOINT"),
-#     #     api_key=os.getenv("AZURE_OPENAI_FRFP_KEY"),
-#     #     api_version=os.getenv("AZURE_OPENAI_FRFP_VERSION")
-#     # )
-#     client = async_client
-
-#     condensed_context = await get_condensed_context(client, reference_text, rfp_text)
-#     prompt = get_communication_plan_prompt(condensed_context)
-
-
-#     # prompt = get_communication_plan_prompt(reference_text, condensed_rfp)
-#     response = await client.chat.completions.create(
-#         model="4o", temperature=0.3, max_tokens=2500,
-#         messages=[{"role": "user", "content": prompt}]
-#     )
-#     return response.choices[0].message.content.strip()
-
-async def async_generate_communication_plan(reference_text, rfp_text):
-    client = async_client
-    condensed_context = await get_condensed_context(client, reference_text, rfp_text)
-
-    prompt = get_communication_plan_prompt(reference_text, condensed_context)
-
-    response = await client.chat.completions.create(
-        model="gpt-4o",
-        temperature=0.3,
-        max_tokens=2500,
-        messages=[{"role": "user", "content": prompt}]
-    )
-    return response.choices[0].message.content.strip()
-
-
-# --- Conditional Logic ---
-def main():
-        # --- Step 1: Upload ---
-    st.markdown("## 📥 Step 1: Upload Your RFP Document")
-
-    uploaded_file = st.file_uploader(
-        " ",
-        type=["pdf", "docx"],
-        key="rfp_uploader",
-        help="Upload your RFP document in PDF or DOCX format.",
-        label_visibility="collapsed"
-    )
-
-    st.markdown("</div>", unsafe_allow_html=True)
-
-    # --- Dynamic Input ---
-    st.markdown("---")
-    st.markdown("### ⚙️ Proposal Configuration")
-
-    if uploaded_file:
-
-            st.markdown("### ✍️ Step 2: Generating Your Proposal Response")
-            with st.spinner("Analyzing RFP and preparing your AI-driven proposal response..."):
-
-
-                with st.status("🚀 Generating Proposal Sections...", expanded=True) as status:
-            
-                    # STEP 1: Extract content
-                    st.write("1/6 🔎 Extracting RFP content...")
-                    rfp_text = extract_text(uploaded_file)
-                    time.sleep(1)
-                    # --- 🔍 Auto-detect number of interfaces / integrations from RFP text ---
-                    # import re
-                    rfp_text = rfp_text.replace(",", "")
-
-                    priority_keywords = ["ICOs?", "iCos?", "integration configuration objects?"]
-                    general_keywords = [
-                        "interfaces?", "integration points?", "flows?", "connections?",
-                        "touchpoints?", "IFlows?", "mappings?", "adapters?"
-                    ]
-
-                    # First: look specifically for ICO mentions
-                    ico_pattern = r'~?\b(\d{1,5})\s*(?:' + "|".join(priority_keywords) + r')\b'
-                    ico_matches = re.findall(ico_pattern, rfp_text, flags=re.IGNORECASE)
-
-                    if ico_matches:
-                        num_interfaces = max(map(int, ico_matches))
-                        detected_type = "ICOs"
-                    else:
-                        # fallback to general terms like 'interfaces' if ICOs not found
-                        pattern = r'~?\b(\d{1,5})\s*(?:' + "|".join(general_keywords) + r')\b'
-                        matches = re.findall(pattern, rfp_text, flags=re.IGNORECASE)
-
-                        if matches:
-                            num_interfaces = max(map(int, matches))
-                            detected_type = "interfaces"
-                        else:
-                            num_interfaces = None
-                            detected_type = None
-
-                                    # Display result
-                    if num_interfaces:
-                        st.info(f"📊 Detected approximately **{num_interfaces} {detected_type}** in RFP.")
-                    else:
-                        st.warning("⚠️ No explicit integration count detected — using default or manual input.")
-
-                    
-                    if len(rfp_text.strip()) < 100:
-                        status.update(label="Extraction Failed", state="error", expanded=False)
-                        st.error("Could not extract enough text from the document. Please check the file.")
-                        st.stop()
-                    
-                    st.success("1/6 ✅ RFP content extracted!")
-                    status.update(label="🚀 Generating Proposal Sections... (20% Complete)", state="running")
-
-                    # STEP 2: Build or load knowledge base & Retrieve context
-                    st.write("2/6 📚 Loading knowledge base and retrieving reference documents...")
-                    knowledge_db = build_knowledge_base()
-                    retriever = knowledge_db.as_retriever(search_kwargs={"k": 1})
-                    ref_docs = retriever.invoke(rfp_text)
-                    reference_text = "\n\n".join([d.page_content for d in ref_docs])
-                    st.success(f"2/6 ✅ Retrieved {len(ref_docs)} relevant reference documents!")
-                    status.update(label="🚀 Generating Proposal Sections... (40% Complete)", state="running")
-
-
-                                    
-                    # Create placeholders for live status updates
-                    progress_placeholder = st.empty()
-                    status_messages = [
-                        "🧠 Generating Executive Summary & Objective...",
-                        "🧩 Generating Scope & Assumptions...",
-                        "📊 Generating Resource Schedule & Commercials...",
-                        "📢 Generating Communication Plan..."
-                    ]
-                    completed = []
-
-                    async def generate_all_sections_async():
-                        async def wrapped_task(task_fn, label):
-                            try:
-                                result = await task_fn
-                                completed.append(f"✅ {label} generated successfully!")
-                                progress_placeholder.markdown("<br>".join(completed), unsafe_allow_html=True)
-                                return result
-                            except Exception as e:
-                                completed.append(f"⚠️ {label} failed: {str(e)}")
-                                progress_placeholder.markdown("<br>".join(completed), unsafe_allow_html=True)
-                                return None
-
-                        tasks = [
-                            wrapped_task(
-                                async_generate_exec_summary_and_objective(reference_text, rfp_text, num_interfaces),
-                                "Executive Summary & Objective"
-                            ),
-                            wrapped_task(
-                                async_generate_scope_sections(reference_text, rfp_text, num_interfaces),
-                                "Scope & Assumptions"
-                            ),
-                            wrapped_task(
-                                async_generate_resource_schedule_and_commercial(reference_text, rfp_text),
-                                "Resource Schedule & Commercials"
-                            ),
-                            wrapped_task(
-                                async_generate_communication_plan(reference_text, rfp_text),
-                                "Communication Plan"
-                            ),
-                        ]
-
-                        results = await asyncio.gather(*tasks, return_exceptions=True)
-                        return results
-
-
-                    with st.spinner("🚀 Generating all proposal sections concurrently..."):
-                        loop = asyncio.new_event_loop()
-                        asyncio.set_event_loop(loop)
-                        exec_obj, scope_text, resource_schedule_text, communication_plan_text = loop.run_until_complete(generate_all_sections_async())
-
-                    # Unpack the tuple from first task
-                    exec_summary, objective = exec_obj if isinstance(exec_obj, tuple) else ("", "")
-
-                    # Final success message
-                    progress_placeholder.markdown("<br>".join(completed) + "<br>🎉 All sections generated successfully!", unsafe_allow_html=True)
-                    st.success("✅ All proposal sections generated in parallel using async!")
-                    status.update(label="✅ Proposal Content Complete!", state="complete", expanded=False)
-
-                # --- Proposal Preview ---
-                st.markdown("## 🔍 Step 2: Review and Edit Content")
-                st.info("Review the AI-generated sections below before downloading the final document.")
-                
-                tab1, tab2, tab3, tab4, tab5 = st.tabs([
-                    "Executive Summary", "Objective", "Scope & Assumptions", 
-                    "Resource & Schedule", "Communication Plan"
-                ])
-                
-                with tab1: st.markdown(exec_summary)
-                with tab2: st.markdown(objective)
-                with tab3: st.markdown(scope_text)
-                with tab4: st.markdown(resource_schedule_text)
-                with tab5: st.markdown(communication_plan_text)
-                
-                # --- Download Section ---
-                st.markdown("---")
-                st.markdown("## 📦 Step 3: Final Document Generation & Download")
-                template_path = "Template/PIPO TO IS Response Template.docx"
-
-                if not os.path.exists(template_path):
-                    st.error(f"Template not found at {template_path}. Cannot generate final DOCX.")
-                else:
-                    st.write("Compiling content into DOCX template...")
-                    final_doc = insert_executive_summary_into_template(
-                        template_path,
-                        summary_text=exec_summary,
-                        objective_text=objective,
-                        scope_text=scope_text,
-                        resource_schedule_text=resource_schedule_text,
-                        communication_plan_text=communication_plan_text,
-                        awards_image_path="Images/Crave Awards.png" 
-                    )
-
-                    buffer = BytesIO()
-                    final_doc.save(buffer)
-                    buffer.seek(0)
-                    
-                    st.markdown("<br>", unsafe_allow_html=True)
-                    st.download_button(
-                        label="🚀 Download Final RFP Proposal (DOCX)",
-                        data=buffer,
-                        file_name=f"RFP_Response_{uploaded_file.name.split('.')[0]}.docx",
-                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                    )
-
-
-                st.success("✅ Proposal response generated successfully!")
-                # st.write(result) 
-    else:
-        st.info("⚠️ Please upload an RFP document (PDF or DOCX) before generating.")

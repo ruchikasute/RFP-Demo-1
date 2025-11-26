@@ -365,7 +365,7 @@ def generate_selected_sections(client, model_name, client_name, selected_section
 # ========================================
 
 def main():
-    st.title("🌐 AI — SOW Generator")
+    st.title("🌐 Application Development — SOW Generator")
     st.caption("✨ Restructured sections with selective generation")
     
     # Initialize session state
@@ -556,7 +556,7 @@ def main():
         st.download_button(
             label="📥 Download Final SOW Document",
             data=buffer,
-            file_name=f"AI_SOW_V2_{datetime.now().strftime('%Y%m%d_%H%M')}.docx",
+            file_name=f"APP_DEV_SOW_V2_{datetime.now().strftime('%Y%m%d_%H%M')}.docx",
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         )
 

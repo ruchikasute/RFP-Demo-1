@@ -1,5 +1,5 @@
 import streamlit as st
-import integration, coreasses, gts, ai # 👈 This will call your current async generator
+import integration, coreasses, gts, ai ,eamV2, appdev, hana_ee, integrationV2, gtsV2, bw# 👈 This will call your current async generator
 
 if "initialized" not in st.session_state:
     st.session_state.view = "home"
@@ -20,10 +20,10 @@ if "view" not in st.session_state:
 # 2. CUSTOM CSS
 # -------------------------------------------------------
 st.markdown("""
-<style>
+            <style>
 :root {
-    --primary-blue: #1A75E0;
-    --light-blue-bg: #EAF3FF;
+    --primary-blue: #FF7A00;
+    --light-blue-bg: #FFF2E6;
 }
 
 /* Header */
@@ -44,12 +44,6 @@ st.markdown("""
 }
 
 /* Buttons */
-.button-box {
-    background: #F9F9F9;
-    border-radius: 15px;
-    padding: 40px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
-}
 div.stButton > button {
     background-color: var(--primary-blue);
     color: white;
@@ -61,16 +55,11 @@ div.stButton > button {
     transition: all 0.2s ease-in-out;
 }
 div.stButton > button:hover {
-    background-color: #145CB0;
+    background-color: #CC6300;
     transform: scale(1.05);
 }
 
-/* Back Button */
-.back-btn {
-    display: flex;
-    justify-content: center;
-    margin-top: 30px;
-}
+/* BACK TO HOME button */
 div[data-testid="stButton"][data-key="back_home"] > button {
     background-color: white !important;
     color: var(--primary-blue) !important;
@@ -80,9 +69,36 @@ div[data-testid="stButton"][data-key="back_home"] > button {
     font-weight: 600;
 }
 div[data-testid="stButton"][data-key="back_home"] > button:hover {
-    background-color: var(--light-blue-bg) !important;
+    background-color: #FFE1C4 !important;
 }
+
+/* --- TEXT-ONLY BACK BUTTON (Integration) --- */
+
+/* Make ONLY the 'back_integration' button plain text */
+button[kind="primary"][data-testid*="back_integration"] {
+    background: none !important;
+    border: none !important;
+    color: #666 !important;
+    padding: 0 !important;
+    margin: 0 0 15px 0 !important;
+    font-size: 16px !important;
+    font-weight: 400 !important;
+    box-shadow: none !important;
+    cursor: pointer !important;
+    width: auto !important;
+    transform: none !important;
+}
+
+/* Hover effect */
+button[kind="primary"][data-testid*="back_integration"]:hover {
+    color: #000 !important;
+    text-decoration: underline !important;
+    background: none !important;
+}
+
+
 </style>
+
 """, unsafe_allow_html=True)
 
 # -------------------------------------------------------
@@ -95,11 +111,18 @@ if "view" not in st.session_state:
 # 4. HOME PAGE
 # -------------------------------------------------------
 if st.session_state.view == "home":
-    st.markdown("<div class='main-header'>Automate Your <span class='highlight-text'>Proposal Response</span></div>", unsafe_allow_html=True)
-    st.markdown("<p class='sub-tagline'>Respond to RFPs in minutes with AI-driven content generation.</p>", unsafe_allow_html=True)
+    st.markdown(
+        "<div class='main-header'>"
+        "Automate Your <span class='highlight-text'>SOW Response</span>"
+        "</div>",
+        unsafe_allow_html=True
+    )
 
-    st.markdown("<div class='button-box'>", unsafe_allow_html=True)
-    st.markdown("<h3 style='text-align:center; color:#333;'>Select a Module to Continue</h3>", unsafe_allow_html=True)
+
+    st.markdown("<p class='sub-tagline'>Generate SOWs quickly and consistently using guided templates.</p>", unsafe_allow_html=True)
+
+    # st.markdown("<div class='button-box'>", unsafe_allow_html=True)
+    st.markdown("<h3 style='text-align:center; color:#333;'>Select a Domain to Continue</h3>", unsafe_allow_html=True)
 
     col1, col2, col3 = st.columns([1, 6, 1])
 
@@ -136,57 +159,89 @@ if st.session_state.view == "home":
                 st.rerun()
         with row2[1]:
             if st.button("💾 HANA EE", use_container_width=True):
-                st.session_state.view = "hana"
+                st.session_state.view = "hana_ee"
                 st.rerun()
         with row2[2]:
             if st.button("📊 BW Modernization", use_container_width=True):
-                st.session_state.view = "hana"
+                st.session_state.view = "bw"
                 st.rerun()
         with row2[3]:
             if st.button("💻 App Development", use_container_width=True):
-                st.session_state.view = "app"
+                st.session_state.view = "appdev"
                 st.rerun()
 
 # -------------------------------------------------------
 # 5. INTEGRATION MODULE (your RFP app)
 # -------------------------------------------------------
+# elif st.session_state.view == "integration":
+#     # --- TOP-LEFT BACK LINK ---
+#     st.markdown(
+#         "<p style='color:#666; font-size:16px; cursor:pointer;'>⬅ Back</p>",
+#         unsafe_allow_html=True
+#     )
+
+#     if st.button(" ", key="go_home"):
+#         st.session_state.view = "home"
+#         st.rerun()
+
+
+#     integration.main()  # 👈 Runs your async RFP generator
+#     # st.markdown("<div class='back-btn'>", unsafe_allow_html=True)
+#     # if st.button("⬅ Back to Home", key="back_home"):
+#     #     st.session_state.view = "home"
+#     #     st.rerun()
+#     st.markdown("</div>", unsafe_allow_html=True)
 elif st.session_state.view == "integration":
-    integration.main()  # 👈 Runs your async RFP generator
-    st.markdown("<div class='back-btn'>", unsafe_allow_html=True)
-    if st.button("⬅ Back to Home", key="back_home"):
+
+    # TEXT-ONLY BACK BUTTON
+    if st.button("⬅ Back", key="back_integration"):
         st.session_state.view = "home"
         st.rerun()
-    st.markdown("</div>", unsafe_allow_html=True)
+
+    integrationV2.main()
+
 
 # -------------------------------------------------------
 # 6. CORE ASSESSMENT MODULE
 # -------------------------------------------------------
 elif st.session_state.view == "coreasses":
-    coreasses.main()
-    # st.subheader("💼 Core Assessment Module")
-    st.markdown("<div class='back-btn'>", unsafe_allow_html=True)
-    if st.button("⬅ Back to Home", key="back_home"):
+        # TEXT-ONLY BACK BUTTON
+    if st.button("⬅ Back", key="back_integration"):
         st.session_state.view = "home"
         st.rerun()
-    st.markdown("</div>", unsafe_allow_html=True)
+    coreasses.main()
+    # st.subheader("💼 Core Assessment Module")
+    # st.markdown("<div class='back-btn'>", unsafe_allow_html=True)
+    # if st.button("⬅ Back to Home", key="back_home"):
+    #     st.session_state.view = "home"
+    #     st.rerun()
+    # st.markdown("</div>", unsafe_allow_html=True)
 
 
 # -------------------------------------------------------
 # 7. GTS MODULE
 # -------------------------------------------------------
 elif st.session_state.view == "gts":
-    gts.main()
-    # st.subheader("💼 Core Assessment Module")
-    st.markdown("<div class='back-btn'>", unsafe_allow_html=True)
-    if st.button("⬅ Back to Home", key="back_home"):
+        # TEXT-ONLY BACK BUTTON
+    if st.button("⬅ Back", key="back_integration"):
         st.session_state.view = "home"
         st.rerun()
-    st.markdown("</div>", unsafe_allow_html=True)
+    gtsV2.main()
+    # # st.subheader("💼 Core Assessment Module")
+    # st.markdown("<div class='back-btn'>", unsafe_allow_html=True)
+    # if st.button("⬅ Back to Home", key="back_home"):
+    #     st.session_state.view = "home"
+    #     st.rerun()
+    # st.markdown("</div>", unsafe_allow_html=True)
 
 # -------------------------------------------------------
 # 8. AI
 # -------------------------------------------------------
 elif st.session_state.view == "ai":
+        # TEXT-ONLY BACK BUTTON
+    if st.button("⬅ Back", key="back_integration"):
+        st.session_state.view = "home"
+        st.rerun()
     ai.main()
     # st.subheader("💼 Core Assessment Module")
     st.markdown("<div class='back-btn'>", unsafe_allow_html=True)
@@ -199,42 +254,34 @@ elif st.session_state.view == "ai":
 # 9. EAM
 # -------------------------------------------------------
 elif st.session_state.view == "eam":
-    st.subheader("Will comming soon")
-    st.markdown("<div class='back-btn'>", unsafe_allow_html=True)
-    if st.button("⬅ Back to Home", key="back_home"):
+    if st.button("⬅ Back", key="back_integration"):
         st.session_state.view = "home"
         st.rerun()
-    st.markdown("</div>", unsafe_allow_html=True)
+    eamV2.main()
 
 # -------------------------------------------------------
 # 10. HANA EE
 # -------------------------------------------------------
-elif st.session_state.view == "hana":
-    st.subheader("Will comming soon")
-    st.markdown("<div class='back-btn'>", unsafe_allow_html=True)
-    if st.button("⬅ Back to Home", key="back_home"):
+elif st.session_state.view == "hana_ee":
+    if st.button("⬅ Back", key="back_integration"):
         st.session_state.view = "home"
         st.rerun()
-    st.markdown("</div>", unsafe_allow_html=True)
+    hana_ee.main()
 
 # -------------------------------------------------------
 # 11. BW Modernization
 # -------------------------------------------------------
-elif st.session_state.view == "hana":
-    st.subheader("Will comming soon")
-    st.markdown("<div class='back-btn'>", unsafe_allow_html=True)
-    if st.button("⬅ Back to Home", key="back_home"):
+elif st.session_state.view == "bw":
+    if st.button("⬅ Back", key="back_integration"):
         st.session_state.view = "home"
         st.rerun()
-    st.markdown("</div>", unsafe_allow_html=True)
+    bw.main()
 
 # -------------------------------------------------------
 # 11. App Development
 # -------------------------------------------------------
-elif st.session_state.view == "app":
-    st.subheader("Will comming soon")
-    st.markdown("<div class='back-btn'>", unsafe_allow_html=True)
-    if st.button("⬅ Back to Home", key="back_home"):
+elif st.session_state.view == "appdev":
+    if st.button("⬅ Back", key="back_integration"):
         st.session_state.view = "home"
         st.rerun()
-    st.markdown("</div>", unsafe_allow_html=True)
+    appdev.main()
