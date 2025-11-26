@@ -15,3 +15,5 @@ gts.py
 integration.py
 vector_db/
 freeze.txt
+# Ignore temporary folder created for pipreqs
+reqtemp/
