@@ -14,3 +14,4 @@ common_ui.py
 gts.py
 integration.py
 vector_db/
+freeze.txt

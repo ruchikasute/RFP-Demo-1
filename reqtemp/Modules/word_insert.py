@@ -254,7 +254,109 @@ def insert_formatted_text(doc, placeholder, text, resource_table_markdown_text=N
 
         last_para = para
         i += 1
-        
+        # # ----------------------------------------
+        # # 3. DETECT BULLETS
+        # # ----------------------------------------
+        # # is_bullet = bool(re.match(r"^\s*[-•*]\s+", raw))
+        # bullet_match = re.match(r"^\s*([-•*])\s*(.+)$", raw)
+        # is_bullet = bullet_match is not None
+
+
+        # indent_level = len(raw) - len(raw.lstrip(" "))
+
+        # # ----------------------------------------
+        # # 4. CREATE PARAGRAPH WITH CORRECT STYLE
+        # # ----------------------------------------
+        # if is_bullet:
+
+        #     if i > 0:
+        #         previous_raw = lines[i - 1].strip()
+
+        #         # Case 1: previous is NOT a bullet
+        #         # Case 2: previous is BLANK (critical fix)
+        #         if previous_raw == "" or not re.match(r"^\s*[-•*]\s*", previous_raw):
+        #             last_para = _create_paragraph_after(last_para, "")
+
+
+        #     # Now create bullet paragraph
+        #     # para = _create_paragraph_after(last_para, "")
+        #     para = _create_paragraph_after(last_para, None)
+
+
+
+
+        #     # Apply bullet style BEFORE inserting text
+        #     if indent_level < 2:
+        #         para.style = "List Bullet"
+        #     else:
+        #         para.style = "List Bullet 2"
+
+        #     # Extract bullet text
+        #     _, clean = bullet_match.groups()
+        #     clean = clean.strip()
+
+
+
+
+        #     # Remove default run but KEEP bullet marker
+        #     # Remove only runs — keep bullet numbering (numPr)
+        #     for r in list(para._p.iter("w:r")):
+        #         para._p.remove(r)
+
+
+
+        #     # --------------------------------------------------------
+            # INSERT BULLET TEXT (fallback bullet + bold support)
+            # --------------------------------------------------------
+
+        #     # Determine if numbering exists in style
+        #     if indent_level < 2:
+        #         numbering_exists = list_bullet_has_num
+        #     else:
+        #         numbering_exists = list_bullet2_has_num
+
+        #     # If numbering missing, manually prefix visual bullet
+        #     final_text = clean
+        #     if not numbering_exists:
+        #         final_text = "• " + final_text
+
+        #     # Insert text with bold handling
+        #     if "**" in final_text:
+        #         bold_pattern = r"\*\*(.+?)\*\*"
+        #         segments = re.split(bold_pattern, final_text)
+
+        #         for idx, seg in enumerate(segments):
+        #             run = para.add_run(seg)
+        #             run.font.name = "Arial"
+        #             run.font.size = Pt(11)
+        #             if idx % 2 == 1:
+        #                 run.bold = True
+        #     else:
+        #         run = para.add_run(final_text)
+        #         run.font.name = "Arial"
+        #         run.font.size = Pt(11)
+
+
+        # else:
+
+        #     # Normal paragraph
+        #     para = _create_paragraph_after(last_para, stripped)
+
+        #     para.style = "Normal"
+
+        #     # Bold handling
+        #     if "**" in stripped:
+        #         bold_pattern = r"\*\*(.+?)\*\*"
+        #         para.clear()
+        #         segments = re.split(bold_pattern, stripped)
+        #         for idx, seg in enumerate(segments):
+        #             run = para.add_run(seg)
+        #             run.font.name = "Arial"
+        #             run.font.size = Pt(11)
+        #             if idx % 2 == 1:
+        #                 run.bold = True
+
+  
 
 
 def insert_markdown_table_after(doc, last_para, table_text):

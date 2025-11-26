@@ -16,19 +16,15 @@
 # python-pptx
 # tabulate
 
-streamlit==1.50.0
-python-dotenv==1.1.1
-openai==1.52.2
-PyPDF2==3.0.1
+streamlit==1.51.0
+openai==2.8.1
 python-docx==1.2.0
-python-pptx==0.6.21
-Pillow==10.3.0
-pandas==2.2.2
-numpy==1.26.4
+python-pptx==1.0.2
 openpyxl==3.1.5
-requests==2.32.3
-lxml==5.2.2
-fastapi==0.115.5
-uvicorn==0.32.0
-python-multipart==0.0.9
-tabulate==0.9.0
+PyPDF2==3.0.1
+xlsxwriter==3.2.9
+pandas==2.3.3
+numpy==2.3.5
+python-dotenv==1.2.1
+Pillow==12.0.0
+requests==2.32.5
