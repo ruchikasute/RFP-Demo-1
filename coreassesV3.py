@@ -119,7 +119,15 @@ from docx import Document
 # Import shared modules
 from Modules.extractors import extract_text_from_file, summarize_large_rfp, extract_block
 from Modules.word_insert import insert_formatted_text, insert_image_at_placeholder
-from Modules.word_insert import insert_plain_preview, insert_markdown_table_after, insert_table_at_placeholder, remove_table_by_tag
+from Modules.word_insert import (
+    insert_formatted_text,
+    insert_plain_preview,
+    insert_markdown_table_after,
+    insert_image_at_placeholder,
+    _create_paragraph_after,
+    insert_table_at_placeholder,
+    remove_table_by_tag,
+)
 from Modules.placeholders import (
     replace_client_name_in_doc,
     replace_submission_date,
