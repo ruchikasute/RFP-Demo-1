@@ -22,6 +22,8 @@ from Modules.word_insert import (
     insert_markdown_table_after,
     insert_image_at_placeholder,
     _create_paragraph_after,
+    insert_table_at_placeholder,
+    remove_table_by_tag,
 )
 
 from Modules.placeholders import (
@@ -365,16 +367,14 @@ def generate_selected_sections(client, model_name, client_name, selected_section
 # ========================================
 
 def main():
-    st.title("🌐 BW Modernization — SOW Generator")
+    st.title("🌐 AI — SOW Generator")
     st.caption("✨ Restructured sections with selective generation")
     
-    # Initialize session state
+    # Initialize session state (UPDATED)
     st.session_state.setdefault("llm_client", None)
     st.session_state.setdefault("llm_model", None)
-
-    # Client name input
-    client_name = st.text_input("Enter Client Name (required)", "")
-
+    st.session_state.setdefault("client_name_ai", "")
+    st.session_state.setdefault("uploaded_file_ai", None)
 
     # Azure LLM client
     client = AzureOpenAI(
@@ -386,100 +386,150 @@ def main():
 
     st.session_state["llm_client"] = client
     st.session_state["llm_model"] = model_name
+    
+    # Ensure reference_text is initialized or retrieved
+    reference_text = st.session_state.get("reference_text", "")
 
 
     # ========================================
-    # V2 RESTRUCTURED SECTION SELECTION
+    # Input Configuration + Ordered Section Selection (REPLICATED FROM INTEGRATION)
     # ========================================
-    
-    st.markdown("---")
-    st.subheader("📋 Select Sections to Generate")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        exec_summary = st.checkbox("1. Executive Summary", value=True, key="chk_exec")
-        about_crave = st.checkbox("2. About Crave InfoTech", value=True, key="chk_crave")
-        our_solution = st.checkbox("3. Our Understanding & Solution", value=True, key="chk_solution")
-        project_scope = st.checkbox("4. Project Scope", value=True, key="chk_scope")
-    
-    with col2:
-        delivery_approach = st.checkbox("5. Project Delivery Approach", value=True, key="chk_delivery")
-        timelines= st.checkbox("6. Project Timelines", value=True, key="chk_timelines")
-        payment_terms = st.checkbox("9. Payment Terms", value=True, key="chk_pay")
-        sign_off = st.checkbox("7. Sign Off", value=True, key="chk_signoff")
-        key_assumptions = st.checkbox("8. Key Assumptions", value=True, key="chk_assumptions")
+    with st.expander("⚙️ Input Configuration", expanded=True):
         
-
-    # Build selected sections list
-    selected_sections = []
-    if exec_summary: selected_sections.append("Executive Summary")
-    if about_crave: selected_sections.append("About Crave InfoTech")
-    if our_solution: selected_sections.append("Our Understanding & Solution")
-    if project_scope: selected_sections.append("Project Scope")
-    if delivery_approach: selected_sections.append("Project Delivery Approach")
-    if timelines: selected_sections.append("Project Timelines")
-    if payment_terms: selected_sections.append("Payment Terms")
-    if sign_off: selected_sections.append("Sign Off")
-    if key_assumptions: selected_sections.append("Key Assumptions")
-
-    st.markdown("---")
-
-    # ========================================
-    # GENERATE BUTTON
-    # ========================================
-    
-    if st.button("⚡ Generate Content"):
-        st.session_state.pop("edited_sections", None)
+        # --- CLIENT DETAILS & RFP UPLOAD ---
+        st.markdown("#### 📝 Client Details & RFP Upload")
         
-        # Reset old editor text areas
-        for key in list(st.session_state.keys()):
-            if key.startswith("editor_"):
-                st.session_state.pop(key)
+        # Client name input (UPDATED to use session state key)
+        client_name = st.text_input("Enter Client Name (required)", st.session_state["client_name_ai"])
+        st.session_state["client_name_ai"] = client_name # Update session state
 
-        # if not reference_text:
-        #     st.warning("⚠ Please upload an RFP first.")
-        #     return
+        # File upload (UPDATED to use session state key and track changes)
+        uploaded_file = st.file_uploader(
+            "Upload RFP Document",
+            type=["pdf", "docx", "xlsx", "pptx"],
+            key="rfp_uploader_ai",
+            help="Upload PDF, Word, Excel or PowerPoint reference document.",
+        )
+        # Handle file upload change (NEW LOGIC)
+        if uploaded_file != st.session_state["uploaded_file_ai"]:
+            st.session_state["uploaded_file_ai"] = uploaded_file
+            if "reference_text" in st.session_state:
+                st.session_state.pop("reference_text") # Clear old reference text if a new file is uploaded
+            if uploaded_file: # Only rerun if a file was actually uploaded, not just cleared
+                st.experimental_rerun() # Rerun to process file immediately
+
+        st.markdown("---")
         
-        if not selected_sections:
-            st.warning("⚠ Please select at least one section to generate.")
-            return
+        # --- SECTION SELECTION ---
+        st.markdown("#### 📋 Select Sections to Generate (in order)")
+        st.caption("✨ Tick sections in the order you want them generated. They will be numbered #1, #2, etc.")
 
-        # Generate selected sections
-        with st.spinner(f"⏳ Generating {len(selected_sections)} selected sections..."):
-            generated_sections = generate_selected_sections(
-                client, model_name,  client_name, selected_sections
-            )
-
-
-        MASTER_ORDER = [
+        # Master list of sections
+        SECTION_LIST = [
             "Executive Summary",
             "About Crave InfoTech",
             "Our Understanding & Solution",
             "Project Scope",
             "Project Delivery Approach",
             "Project Timelines",
-            "Payment Terms",
+            "Payment Terms", 
             "Sign Off",
             "Key Assumptions",
         ]
-
-        ordered_list = []
-
-        for section_name in MASTER_ORDER:
-            if section_name in generated_sections:
-                content = generated_sections[section_name]
-                content = re.sub(r"</?[^>]+>", "", content).strip()
-                ordered_list.append({
-                    "title": section_name,
-                    "content": content
-                })
-
-        st.session_state["edited_sections"] = ordered_list
-
         
-        st.success(f"✅ Generated {len(selected_sections)} sections!")
+        # Initialize checkbox states in session state (once)
+        if "checkbox_states_ai" not in st.session_state:
+            st.session_state["checkbox_states_ai"] = {section: False for section in SECTION_LIST}
+        
+        # Display checkboxes in 2 columns with live order tracking
+        col1, col2 = st.columns(2)
+        
+        # Render checkboxes and track state changes (5 items in col1, 4 items in col2)
+        for i, section in enumerate(SECTION_LIST):
+            col = col1 if i < 5 else col2 
+            with col:
+                # Get current state
+                current_state = st.session_state["checkbox_states_ai"][section]
+                # Use a unique key for checkboxes in AI
+                new_state = st.checkbox(section, value=current_state, key=f"chk_ai_{section}_v2")
+                
+                # Update state if changed
+                st.session_state["checkbox_states_ai"][section] = new_state
+        
+        # Build selected sections list in the order they appear in SECTION_LIST
+        selected_sections = [s for s in SECTION_LIST if st.session_state["checkbox_states_ai"].get(s)]
 
+        # Display selected sections with order numbers
+        if selected_sections:
+            st.markdown("---")
+            st.markdown("### ✅ Selected Sections (in generation order)")
+            cols_display = st.columns(min(3, len(selected_sections)))
+            for idx, section in enumerate(selected_sections):
+                with cols_display[idx % len(cols_display)]:
+                    st.markdown(f"**#{idx + 1}** — {section}")
+        
+        st.markdown("---")
+        
+        # ========================================
+        # GENERATE BUTTON (INSIDE EXPANDER)
+        # ========================================
+        
+        if st.button("⚡ Generate Content", key="gen_ai"): 
+            st.session_state.pop("edited_sections", None)
+            
+            # Reset old editor text areas
+            for key in list(st.session_state.keys()):
+                if key.startswith("editor_"):
+                    st.session_state.pop(key)
+
+            # --- PROCESS RFP FILE IF UPLOADED (UPDATED LOGIC) ---
+            reference_text = st.session_state.get("reference_text", "")
+            
+            # Use uploaded_file_ai from session state which is the source of truth after the rerun logic
+            uploaded_file_sot = st.session_state["uploaded_file_ai"]
+            
+            if uploaded_file_sot and not reference_text:
+                # Need to process file if not already done
+                with st.spinner("Processing RFP..."):
+                    raw_text = extract_text_from_file(uploaded_file_sot)
+                    if len(raw_text.split()) > 3500:
+                        st.session_state["reference_text"] = summarize_large_rfp(client, model_name=model_name, text=raw_text)
+                    else:
+                        st.session_state["reference_text"] = raw_text
+                reference_text = st.session_state["reference_text"]
+                st.success(f"✅ Extracted {len(raw_text.split())} words from RFP.")
+            elif not uploaded_file_sot:
+                reference_text = ""        # Use empty reference
+                st.info("ℹ No RFP uploaded — generating a generic SOW draft.")
+            
+            
+            if not selected_sections:
+                st.warning("⚠ Please select at least one section to generate.")
+            elif not client_name:
+                st.warning("⚠ Please enter the Client Name.")
+            else:
+                # Generate selected sections
+                with st.spinner(f"⏳ Generating {len(selected_sections)} selected sections..."):
+                    generated_sections = generate_selected_sections(
+                        client, model_name, client_name, selected_sections
+                    )
+
+                MASTER_ORDER = SECTION_LIST
+
+                ordered_list = []
+
+                for section_name in MASTER_ORDER:
+                    if section_name in generated_sections:
+                        content = re.sub(r"</?[^>]+>", "", generated_sections[section_name]).strip()
+                        ordered_list.append({
+                            "title": section_name,
+                            "content": content
+                        })
+
+                st.session_state["edited_sections"] = ordered_list
+                st.success(f"✅ Generated {len(selected_sections)} sections!")
+
+    
     # ========================================
     # PREVIEW TABS
     # ========================================
@@ -536,7 +586,6 @@ def main():
         st.download_button(
             label="📥 Download Final SOW Document",
             data=buffer,
-            file_name=f"BW_SOW_V2_{datetime.now().strftime('%Y%m%d_%H%M')}.docx",
+            file_name=f"AI_SOW_V2_{datetime.now().strftime('%Y%m%d_%H%M')}.docx",
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         )
-

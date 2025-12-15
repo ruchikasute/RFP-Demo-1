@@ -12,6 +12,12 @@ from docx.enum.table import WD_TABLE_ALIGNMENT, WD_ALIGN_VERTICAL
 from dotenv import load_dotenv
 load_dotenv()
 
+
+def get_knowledge():
+    """Always return latest knowledge text for LLM prompts."""
+    return st.session_state.get("knowledge_text", "") or ""
+
+
 def insert_excel_appendix(final_doc):
     """
     Inserts the uploaded Excel content (stored as markdown)
@@ -113,6 +119,7 @@ from docx import Document
 # Import shared modules
 from Modules.extractors import extract_text_from_file, summarize_large_rfp, extract_block
 from Modules.word_insert import insert_formatted_text, insert_image_at_placeholder
+from Modules.word_insert import insert_plain_preview, insert_markdown_table_after, insert_table_at_placeholder, remove_table_by_tag
 from Modules.placeholders import (
     replace_client_name_in_doc,
     replace_submission_date,
@@ -250,9 +257,70 @@ RULES:
 
     return response.choices[0].message.content.strip()
 
+def generate_solution_section(client, model_name, knowledge_text, client_name):
+
+    placeholder = "[[ARCHITECTURE_IMG]]"
+
+    prompt = f"""
+You are creating Section 5 — Solution Overview for the Clean Core Assessment SOW for {client_name}.
+
+MANDATORY:
+You MUST include the placeholder EXACTLY as: {placeholder}
+Do NOT modify it.
+
+====================
+STRUCTURE
+====================
+
+5.1 Proposed Architecture
+Write a 6–8 line paragraph describing:
+- High-level SAP BTP architectural positioning for Clean Core modernization
+- How the platform enables extensibility, governance, and sustainable operations
+- How it supports standardization and future readiness
+- Include a reference to the architecture diagram (business tone only)
+
+Then on a new line write ONLY:
+{placeholder}
+
+5.2 Bill of Material (BOM)
+Write 5–7 bullets using (•).
+The bullets must:
+- List SAP BTP services relevant for Clean Core modernization
+- Use only business-friendly names (e.g., SAP BTP Identity Authentication, SAP BTP Workflow Management)
+- No descriptions after the service name
+- No technical jargon
+- Do NOT reuse any service more than once
+- Let the LLM choose the appropriate SAP BTP services (do NOT copy from the prompt)
+
+====================
+RULES
+====================
+- No markdown
+- No bold or formatting syntax
+- Use only paragraphs + (•) bullets
+- Output MUST include placeholder {placeholder} exactly once
+- Output only the section content
+
+
+USE THIS CONTEXT FOR UNDERSTANDING:
+
+KNOWLEDGE BASE:
+{knowledge_text}
+"""
+
+    response = client.chat.completions.create(
+        model=model_name,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.35,
+    )
+
+    return response.choices[0].message.content.strip()
+
+
+
 def generate_solution_approach(client, model_name, client_name):
     prompt = f"""
-Generate the 'Proposed Solution Approach' for a Clean Core Assessment SOW.
+Generate the 'Project Approach' for a Clean Core Assessment SOW.
 
 INSTRUCTIONS:
 Write 2–3 paragraphs covering:
@@ -364,10 +432,10 @@ Output only the structured content.
 
 
 def generate_selected_sections(client, model_name, client_name, selected_sections):
-    """
-    Generate ONLY the sections the user selected (CoreAssess SOW).
-    Uses parallel execution for speed.
-    """
+    # universal knowledge access
+    knowledge = get_knowledge()
+
+
 
     # Map UI Section Names → Generation Functions
     section_generators = {
@@ -375,7 +443,8 @@ def generate_selected_sections(client, model_name, client_name, selected_section
         "About Crave InfoTech": lambda: generate_about_crave(client, model_name, client_name),
         "Our Understanding": lambda: generate_our_understanding(client, model_name, client_name),
         "Project Scope": lambda: generate_project_scope(client, model_name, client_name),
-        "Proposed Solution Approach": lambda: generate_solution_approach(client, model_name, client_name),
+        "Solution": lambda: generate_solution_section(client, model_name, knowledge, client_name),  # NEW
+        "Project Approach": lambda: generate_solution_approach(client, model_name, client_name),
         "Team Structure": lambda: generate_team_structure(client, model_name, client_name),
         "Commercials & Payment Terms": lambda: generate_commercials(client, model_name, client_name),
         "Sign Off": lambda: generate_sign_off(client, model_name, client_name),
@@ -421,23 +490,7 @@ def main():
     st.session_state.setdefault("llm_client", None)
     st.session_state.setdefault("llm_model", None)
 
-    # -------------------------------
-    # Client name input + RFP upload
-    # -------------------------------
-    client_name = st.text_input("Enter Client Name (required)", "")
-    uploaded = st.file_uploader("📂 Upload Excel (.xlsx)", type=["xlsx"])
-    if uploaded:
-  
-        df = pd.read_excel(uploaded).fillna("")
-
-         # store table in markdown so preview + Word both can use
-        excel_markdown = df.to_markdown(index=False)
-        st.session_state["excel_markdown"] = excel_markdown
-
-        # st.session_state["reference_text"] = df.to_csv(index=False)
-
-
-    # Azure LLM client
+    # Azure LLM client (initialize early so generate button inside expander can use it)
     client = AzureOpenAI(
         azure_endpoint=os.getenv("AZURE_OPENAI_FRFP_ENDPOINT"),
         api_key=os.getenv("AZURE_OPENAI_FRFP_KEY"),
@@ -445,88 +498,118 @@ def main():
     )
     model_name = "gpt-4o-mini"
 
-    # Store globally (MUST be before using them)
     st.session_state["llm_client"] = client
     st.session_state["llm_model"] = model_name
 
-    # ========================================
-    # SECTION SELECTION (CoreAssess SOW)
-    # ========================================
+    # -------------------------------
+    # Client + Input Configuration (expander with ordered selection)
+    # -------------------------------
 
-    st.markdown("---")
-    st.subheader("📋 Select Sections to Generate")
+    with st.expander("⚙️ Input Configuration", expanded=True):
+        st.markdown("#### 📝 Client Details & Reference Upload")
 
-    col1, col2 = st.columns(2)
+        # Client name input
+        client_name = st.text_input("Enter Client Name (required)", "", key="client_name_coreass")
 
-    with col1:
-        exec_summary = st.checkbox("1. Executive Summary", value=True, key="chk_exec")
-        about_crave = st.checkbox("2. About Crave InfoTech", value=True, key="chk_crave")
-        our_understanding = st.checkbox("3. Our Understanding", value=True, key="chk_understanding")
-        project_scope = st.checkbox("4. Project Scope", value=True, key="chk_scope")
+        # Single unified uploader (matches integrationV3)
+        uploaded_file = st.file_uploader(
+            "Upload RFP Document",
+            type=["pdf", "docx", "xlsx", "pptx"],
+            key="rfp_uploader_coreass",
+            help="Upload PDF, Word, Excel or PowerPoint reference document.",
+        )
 
-    with col2:
-        solution_approach = st.checkbox("5. Proposed Solution Approach", value=True, key="chk_solution")
-        team_structure = st.checkbox("6. Team Structure", value=True, key="chk_team")
-        commercials = st.checkbox("8. Commercials & Payment Terms", value=True, key="chk_commercials")
-        sign_off = st.checkbox("9. Sign Off", value=True, key="chk_signoff")
-        assumptions = st.checkbox("10. Key Assumptions", value=True, key="chk_assumptions")
+        st.markdown("---")
 
-    # Build list of selected sections
-    selected_sections = []
-    if exec_summary: selected_sections.append("Executive Summary")
-    if about_crave: selected_sections.append("About Crave InfoTech")
-    if our_understanding: selected_sections.append("Our Understanding")
-    if project_scope: selected_sections.append("Project Scope")
-    if solution_approach: selected_sections.append("Proposed Solution Approach")
-    if team_structure: selected_sections.append("Team Structure")
-    if commercials: selected_sections.append("Commercials & Payment Terms")
-    if sign_off: selected_sections.append("Sign Off")
-    if assumptions: selected_sections.append("Key Assumptions")
+        st.markdown("#### 📋 Select Sections to Generate (in order)")
+        st.caption("✨ Tick sections in the order you want them generated. They will be numbered #1, #2, etc.")
 
-
-    # ========================================
-    # GENERATE SELECTED SECTIONS
-    # ========================================
-
-    if st.button("⚡ Generate Content"):
-        st.session_state.pop("edited_sections", None)
-
-        # Reset editors
-        for key in list(st.session_state.keys()):
-            if key.startswith("editor_"):
-                st.session_state.pop(key)
-
-        if not selected_sections:
-            st.warning("⚠ Please select at least one section to generate.")
-            st.stop()
-
-        # Generate only selected sections
-        with st.spinner(f"⏳ Generating {len(selected_sections)} section(s)..."):
-            generated = generate_selected_sections(client, model_name, client_name, selected_sections)
-
-        # ORDER FIX (always output in fixed SOW order)
-        MASTER_ORDER = [
+        SECTION_LIST = [
             "Executive Summary",
             "About Crave InfoTech",
             "Our Understanding",
             "Project Scope",
-            "Proposed Solution Approach",
+            "Solution",
+            "Project Approach",
             "Team Structure",
             "Commercials & Payment Terms",
             "Sign Off",
-            "Key Assumptions"
+            "Key Assumptions",
         ]
 
+        # Initialize checkbox states in session state (once)
+        if "checkbox_states_coreasses" not in st.session_state:
+            st.session_state["checkbox_states_coreasses"] = {section: False for section in SECTION_LIST}
 
-        ordered_list = []
-        for section_name in MASTER_ORDER:
-            if section_name in generated:
-                clean = re.sub(r"</?[^>]+>", "", generated[section_name]).strip()
-                ordered_list.append({"title": section_name, "content": clean})
+        col1, col2 = st.columns(2)
+        for i, section in enumerate(SECTION_LIST):
+            col = col1 if i < (len(SECTION_LIST) // 2 + len(SECTION_LIST) % 2) else col2
+            with col:
+                current_state = st.session_state["checkbox_states_coreasses"][section]
+                new_state = st.checkbox(section, value=current_state, key=f"chk_coreass_{i}")
+                st.session_state["checkbox_states_coreasses"][section] = new_state
 
-        st.session_state["edited_sections"] = ordered_list
-        st.success(f"✅ Generated {len(selected_sections)} sections!")
+        # Build selected sections list in the order they appear in SECTION_LIST
+        selected_sections = [s for s in SECTION_LIST if st.session_state["checkbox_states_coreasses"].get(s)]
 
+        # Display selected sections with order numbers
+        if selected_sections:
+            st.markdown("---")
+            st.markdown("### ✅ Selected Sections (in generation order)")
+            cols_display = st.columns(min(3, len(selected_sections)))
+            for idx, section in enumerate(selected_sections):
+                with cols_display[idx % len(cols_display)]:
+                    st.markdown(f"**#{idx + 1}** — {section}")
+
+        st.markdown("---")
+
+        # Generate button inside expander (mirrors integrationV3)
+        if st.button("⚡ Generate Content"):
+            st.session_state.pop("edited_sections", None)
+
+            # Reset editors
+            for key in list(st.session_state.keys()):
+                if key.startswith("editor_"):
+                    st.session_state.pop(key)
+
+            # Allow generation even without RFP
+            reference_text = st.session_state.get("reference_text", "")
+            if not reference_text:
+                reference_text = ""
+                st.info("ℹ No RFP uploaded — generating a generic SOW draft.")
+
+            if not selected_sections:
+                st.warning("⚠ Please select at least one section to generate.")
+            else:
+                with st.spinner(f"⏳ Generating {len(selected_sections)} selected sections..."):
+                    generated = generate_selected_sections(client, model_name, client_name, selected_sections)
+
+                MASTER_ORDER = SECTION_LIST
+
+                ordered_list = []
+                for section_name in MASTER_ORDER:
+                    if section_name in generated:
+                        content = generated[section_name].strip()
+                        ordered_list.append({"title": section_name, "content": content})
+
+                st.session_state["edited_sections"] = ordered_list
+                st.success(f"✅ Generated {len(selected_sections)} sections!")
+
+
+    # Process uploaded reference (if any)
+    if uploaded_file and "reference_text" not in st.session_state:
+        try:
+            name = uploaded_file.name.lower()
+            if name.endswith('.xlsx'):
+                df = pd.read_excel(uploaded_file).fillna("")
+                st.session_state["excel_markdown"] = df.to_markdown(index=False)
+                st.success("Excel appendix processed and stored for insertion.")
+            else:
+                raw = extract_text_from_file(uploaded_file)
+                st.session_state["reference_text"] = summarize_large_rfp(raw)
+                st.success("Uploaded reference processed and used as contextual reference.")
+        except Exception:
+            st.warning("Could not process uploaded reference. Continuing without it.")
 
     # ========================================
     # PREVIEW
@@ -557,7 +640,8 @@ def main():
             "About Crave InfoTech": "<ABOUT_CRAVE>",
             "Our Understanding": "<OUR_SOL>",
             "Project Scope": "<PROJECT_SCOPE>",
-            "Proposed Solution Approach": "<DELIVERY_APPROACH>",
+            "Solution": "<SOLUTION>",
+            "Project Approach": "<DELIVERY_APPROACH>",
             "Team Structure": "<TEAM_STRUCTURE>",
             "Commercials & Payment Terms": "<PAYMENT TERMS>",
             "Sign Off": "<SIGN_OFF>",

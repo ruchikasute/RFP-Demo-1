@@ -413,7 +413,7 @@ def main():
     # ========================================
     
     st.markdown("---")
-    st.subheader("📋 Select Sections to Generate (V2 Structure)")
+    st.subheader("📋 Select Sections to Generate")
     
     col1, col2 = st.columns(2)
     
@@ -449,7 +449,7 @@ def main():
     # GENERATE BUTTON
     # ========================================
     
-    if st.button("⚡ Generate Selected Sections"):
+    if st.button("⚡ Generate Content"):
         st.session_state.pop("edited_sections", None)
         
         # Reset old editor text areas

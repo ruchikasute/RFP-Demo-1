@@ -5,6 +5,7 @@ from datetime import datetime
 from docx import Document
 
 # Assuming these imports work as in your original code
+import concurrent.futures
 
 from Modules.extractors import (
     extract_text_from_file,
@@ -22,6 +23,8 @@ from Modules.word_insert import (
     insert_markdown_table_after,
     insert_image_at_placeholder,
     _create_paragraph_after,
+    insert_table_at_placeholder,
+    remove_table_by_tag,
 )
 
 from Modules.placeholders import (
@@ -42,12 +45,12 @@ from Modules.preview import section_preview_tabs, md_to_html
 # ========================================
 
 def generate_executive_summary(client, model_name, reference_text, client_name):
-    """Generate ONLY the Executive Summary for a EAM SOW"""
+    """Generate ONLY the Executive Summary for a GTS SOW"""
 
     prompt = f"""
-You are a Senior SAP EAM Consultant from Crave InfoTech.
+You are a Senior SAP GTS Consultant from Crave InfoTech.
 
-Generate ONLY the Executive Summary section for an SAP EAM Implementation SOW.
+Generate ONLY the Executive Summary section for an SAP GTS Implementation SOW.
 
 CLIENT: {client_name}
 
@@ -65,7 +68,7 @@ STYLE GUIDELINES:
 
 CONTENT REQUIREMENTS:
 - Provide a high-level overview of the client’s global trade, compliance, and customs challenges.
-- Mention how implementing SAP EAM will streamline compliance, automate trade processes, reduce manual effort, strengthen audit readiness, and enhance global trade visibility.
+- Mention how implementing SAP GTS will streamline compliance, automate trade processes, reduce manual effort, strengthen audit readiness, and enhance global trade visibility.
 - Highlight the alignment with global regulatory requirements (export control, sanctioned party screening, customs processes).
 - Emphasize overall value: operational efficiency, risk mitigation, governance, and improved cross-border trade execution.
 - Reference that the proposed engagement aims to help the client modernize, simplify, and standardize their trade compliance operations.
@@ -91,7 +94,7 @@ REFERENCE STYLE GUIDE:
 {st.session_state.get("knowledge_text", "")}
 
 INSTRUCTIONS:
-- Describe Crave InfoTech's expertise in SAP EAM in 2-3 lines
+- Describe Crave InfoTech's expertise in SAP GTS in 2-3 lines
 - Highlight migration factory experience
 - Professional tone showcasing credibility
 
@@ -109,9 +112,9 @@ Output ONLY the "About Crave InfoTech" content. No tags, no extra text.
 def generate_our_understanding_solution(client, model_name, reference_text, client_name, total_interfaces=None):
 
     prompt = f"""
-You are a Senior SAP EAM Consultant from Crave InfoTech.
+You are a Senior SAP GTS Consultant from Crave InfoTech.
 
-Generate the "Our Understanding & Solution" section for {client_name}.
+Generate the "Our Understanding " section for {client_name}.
 DO NOT use bold (**text**) or markdown. Headings must be plain text.
 
 CRITICAL:
@@ -131,8 +134,8 @@ Write 2–3 paragraphs:
 
 3.2 Our Proposed Solution
 Write 2–3 paragraphs:
-- A high-level SAP EAM implementation approach.
-- Why SAP EAM is the right strategic platform for compliance, customs, and trade automation.
+- A high-level SAP GTS implementation approach.
+- Why SAP GTS is the right strategic platform for compliance, customs, and trade automation.
 - Business benefits: risk reduction, operational efficiency, automated screening, improved visibility, regulatory alignment.
 - Keep content business-oriented, not technical.
 
@@ -160,11 +163,11 @@ RULES:
 
 def generate_project_scope(client, model_name, reference_text, client_name, total_interfaces=None):
     """
-    Generate Project Scope with fixed SOW structure (EAM Version)
+    Generate Project Scope with fixed SOW structure (GTS Version)
     """
 
     prompt = f"""
-You are writing the "Project Scope" section for {client_name}'s SAP EAM implementation.
+You are writing the "Project Scope" section for {client_name}'s SAP GTS implementation.
 
 CRITICAL:
 - This is a Statement of Work (SOW). Keep the content HIGH-LEVEL.
@@ -177,7 +180,7 @@ Write ONLY these four sub-sections in order:
 
 4.1 Proposed Solution
 Write a single high-level paragraph (6–8 lines) describing:
-- The proposed SAP EAM implementation approach and key capabilities.
+- The proposed SAP GTS implementation approach and key capabilities.
 - Coverage of compliance processes such as Sanctioned Party Screening, Export Control, Customs Management, and other relevant modules.
 - High-level integration with SAP ERP for trade, logistics, and compliance processes.
 - The strategic value of standardizing and automating global trade processes.
@@ -191,17 +194,17 @@ Write a single high-level paragraph (6–8 lines) describing:
 - Deployment and cutover readiness documents.
 
 4.3 Acceptance Criteria
-- Clear criteria for successful SAP EAM implementation.
+- Clear criteria for successful SAP GTS implementation.
 - Functional completeness and alignment with business requirements.
 - Successful testing outcomes.
 - User enablement and sign-off.
 - Production deployment readiness.
 
 4.4 Out of Scope
-- Explicit list of exclusions for this EAM implementation.
+- Explicit list of exclusions for this GTS implementation.
 - Any modules, countries, or business units not included.
 - Custom development beyond agreed scope.
-- Integration components not covered under the EAM program.
+- Integration components not covered under the GTS program.
 
 RULES:
 - 4.1 must be a single high-level paragraph (NOT bullets).
@@ -222,45 +225,105 @@ BEGIN.
 
     return response.choices[0].message.content.strip()
 
-import concurrent.futures
-def generate_delivery_approach(client, model_name, reference_text, client_name, total_interfaces=None):
+def generate_solution_section(client, model_name, reference_text, client_name):
+    """Generate the GTS Solution section following Integration-style structure."""
+
+    knowledge_text = st.session_state.get("knowledge_text", "")
+    placeholder = "[[ARCHITECTURE_IMG]]"
 
     prompt = f"""
-You are a Senior SAP Consultant from Crave InfoTech.
+You are a Senior SAP GTS Consultant from Crave InfoTech.
 
-Generate the full "Project Delivery Approach" section for {client_name}'s SAP GTS implementation.
-Rewrite it in a professional, business-focused way using 5 phases:
+Generate Section 5 — Solution for {client_name}'s SAP GTS Implementation SOW.
 
-Phase 1: Project Planning and Initiation  
-Phase 2: Design Thinking / Business Blueprint & Gap Analysis  
-Phase 3: Baseline Configuration  
-Phase 4: Project Realization  
-Phase 5: User Acceptance Testing and Go-Live  
+REFERENCE KNOWLEDGE (style & tone guidelines):
+{knowledge_text}
 
-Instructions:
-- For each phase, write one paragraph of 4–5 lines.
-- Describe activities, collaboration, governance, and expected outcomes.
-- Keep content high-level and aligned with standard SAP delivery practices.
-- No bullets, no markdown, no technical configuration details.
-- Use reference text only for context, do not copy it.
-
-REFERENCE TEXT:
+REFERENCE TEXT (from RFP):
 {reference_text}
 
-Output only the 5 phase paragraphs with their phase headings.
+=====================================================
+STRUCTURE TO FOLLOW (STRICT)
+=====================================================
+
+5.1 Proposed Architecture
+Write a 6–8 line high-level paragraph describing:
+- Overall SAP GTS architecture and landscape positioning
+- Alignment between SAP ERP and GTS for trade compliance processes
+- Screening, export control, customs management, and risk management flows
+- Governance, data alignment, and regulatory readiness
+- High-level integration touchpoints (non-technical)
+- Mention that an architecture diagram is referenced
+
+Then on a NEW LINE output ONLY:
+{placeholder}
+
+5.2 Bill of Material (BOM)
+Write 4–6 bullets (• symbol) listing key SAP GTS components and supporting systems:
+• SAP GTS – Compliance Management  
+• SAP GTS – Customs Management  
+• SAP GTS – Risk Management  
+• SAP ERP (ECC or S/4HANA)  
+• SAP NetWeaver / GTS Application Server  
+• Supporting SAP Fiori / Reporting Tools  
+
+=====================================================
+RULES
+=====================================================
+- No markdown (no **, no #)
+- No bold, no italics
+- Use only text + bullets (•)
+- The placeholder {placeholder} must appear EXACTLY once
+- Keep content business-focused, non-technical
+- Output ONLY the final section text
 """
 
     response = client.chat.completions.create(
-        model="Codetest",
+        model=model_name,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.3,
+    )
+
+    return response.choices[0].message.content.strip()
+
+
+
+def generate_delivery_approach(client, model_name, reference_text, client_name, total_interfaces=None):
+
+    prompt = f"""
+You are a Senior SAP GTS Consultant from Crave InfoTech.
+
+Generate ONLY a short introductory narrative (2–3 lines) for the "Project Approach" section for {client_name}'s SAP GTS implementation.
+
+CONTEXT:
+The detailed project phase table (Preparation, Blueprint, Realization, Testing, Documentation) will already be included in the SOW template. Your output should ONLY provide a high-level introduction explaining the overall delivery methodology.
+
+DO NOT include:
+- Headings
+- Technical configurations
+- Any table content (the template already contains it)
+
+WRITE A 2–3 LINE INTRO PARAGRAPH THAT:
+- Explains Crave InfoTech's structured SAP GTS implementation methodology.
+- Mentions the focus on governance, collaboration with client teams, and ensuring compliance readiness.
+- Summarizes how Functional, Technical, and PMO resources jointly execute the project phases.
+- Stays high-level, business-focused, and professional.
+
+Output ONLY the short introduction narrative. No bullets, no lists, no extra commentary.
+"""
+
+    response = client.chat.completions.create(
+        model=model_name,
         messages=[{"role": "user", "content": prompt}],
         temperature=0.4
     )
     return response.choices[0].message.content.strip()
 
+
 def generate_timelines(client, model_name, reference_text, client_name, total_interfaces=None):
 
     prompt = f"""
-Write the full 'Project Timelines & Resources' section for {client_name}'s SAP EAM implementation.
+Write the full 'Project Timelines & Resources' section for {client_name}'s SAP GTS implementation.
 Produce 3 paragraphs of 4–5 lines each. No bullets, no headings, no dates, no numbers.
 
 Guidelines:
@@ -300,7 +363,7 @@ Output ONLY the "Sign Off" content. No tags, no extra text.
 """
     
     response = client.chat.completions.create(
-        model="Codetest",
+        model=model_name,
         messages=[{"role":"user","content":prompt}],
         temperature=0.4
     )
@@ -309,31 +372,29 @@ Output ONLY the "Sign Off" content. No tags, no extra text.
 def generate_key_assumptions(client, model_name, reference_text, client_name):
 
     prompt = f"""
-You are writing the "Key Assumptions" section for {client_name}'s SAP EAM Implementation SOW.
+You are writing the "Key Assumptions" section for {client_name}'s SAP GTS Implementation SOW.
 
 GENERATE:
-- 3 to 5 subsections.
-- Each subsection must start with a numbering format like: 7.1 Client Responsibilities, 7.2 Data Readiness, 7.3 Infrastructure & Access, 7.4 Project Governance, etc.
-- After each heading, write 2–4 bullet points using the real bullet symbol (•).
-- Bullets must be short, business-focused, and project-oriented.
-- Content should reflect typical EAM implementation assumptions and any relevant cues from the RFP.
+- 3 to 5 subsections with simple headings (e.g., Client Responsibilities, Data Readiness, Infrastructure & Access, Project Governance, Others).
+- Each subsection should contain 2–4 short bullet points.
+- Bullets must be high-level and project-oriented, not legal or overly detailed.
+- Content must be based on standard GTS implementation assumptions and any relevant cues from the RFP.
 
-STRICT RULES:
-- ABSOLUTELY DO NOT use markdown (no ###, no ####, no **bold**, no italics).
-- Headings must be plain text (e.g., 7.1 Client Responsibilities).
-- Output must be plain text only with headings + bullets.
-- No paragraphs outside the subsections.
-- No references to PI/PO, Integration Suite, interfaces, or technical configs.
+RULES:
+- Add numbering styles like 7.1 for secctions.
+- Use plain text headings followed by bullets.
+- Use real bullets (•).
+- Keep it concise and business-focused.
+- Do NOT mention PI/PO, Integration Suite, interfaces, or technical configurations.
+- Output ONLY the assumptions section.
 
-REFERENCE TEXT:
+REFERENCE TEXT FROM RFP:
 {reference_text}
-
-Output only the assumptions section with headings and bullets.
 """
 
     response = client.chat.completions.create(
         model=model_name,
-        messages=[{"role": "user", "content": prompt}],
+        messages=[{"role":"user","content":prompt}],
         temperature=0.3
     )
 
@@ -354,9 +415,10 @@ def generate_selected_sections(client, model_name, reference_text, client_name, 
     section_generators = {
         "Executive Summary": lambda: generate_executive_summary(client, model_name, reference_text, client_name),
         "About Crave InfoTech": lambda: generate_about_crave(client, model_name, reference_text, client_name),
-        "Our Understanding & Solution": lambda: generate_our_understanding_solution(client, model_name, reference_text, client_name, total_interfaces),
+        "Our Understanding": lambda: generate_our_understanding_solution(client, model_name, reference_text, client_name, total_interfaces),
         "Project Scope": lambda: generate_project_scope(client, model_name, reference_text, client_name, total_interfaces),
-        "Project Delivery Approach": lambda: generate_delivery_approach(client, model_name, reference_text, client_name, total_interfaces),
+        "Solution": lambda: generate_solution_section(client, model_name, reference_text, client_name),   # NEW
+        "Project Approach": lambda: generate_delivery_approach(client, model_name, reference_text, client_name, total_interfaces),
         "Project Timelines": lambda: generate_timelines(client, model_name, reference_text, client_name, total_interfaces),
         "Sign Off": lambda: generate_sign_off(client, model_name, client_name),
         "Key Assumptions": lambda: generate_key_assumptions(client, model_name, reference_text, client_name),
@@ -383,23 +445,15 @@ def generate_selected_sections(client, model_name, reference_text, client_name, 
 # ========================================
 
 def main():
-    st.title("🌐 EAM — SOW Generator (V2)")
+    st.title("🌐 GTS — SOW Generator")
     st.caption("✨ Restructured sections with selective generation")
     
     # Initialize session state
     st.session_state.setdefault("llm_client", None)
     st.session_state.setdefault("llm_model", None)
+    st.session_state.setdefault("client_name_gts", "")
+    st.session_state.setdefault("uploaded_file_gts", None)
 
-    # Client name input
-    client_name = st.text_input("Enter Client Name (required)", "")
-
-    # File upload
-    uploaded_file = st.file_uploader(
-        "Upload RFP Document",
-        type=["pdf", "docx", "xlsx", "pptx"],
-        key="rfp_uploader",
-        help="Upload PDF, Word, Excel or PowerPoint reference document.",
-    )
 
     # Azure LLM client
     client = AzureOpenAI(
@@ -412,115 +466,148 @@ def main():
     st.session_state["llm_client"] = client
     st.session_state["llm_model"] = model_name
 
-    # Extract and process uploaded file
-    if uploaded_file and "reference_text" not in st.session_state:
-        raw_text = extract_text_from_file(uploaded_file)
-        extracted_items = []
-        st.success(f"✅ Extracted {len(raw_text.split())} words")
-
-        # Store reference text
-        if len(raw_text.split()) > 3500:
-            st.session_state["reference_text"] = summarize_large_rfp(client, model_name=model_name, text=raw_text)
-        else:
-            st.session_state["reference_text"] = raw_text
-
-    reference_text = st.session_state.get("reference_text", "")
-
     # ========================================
-    # V2 RESTRUCTURED SECTION SELECTION
+    # Input Configuration + Ordered Section Selection (REPLICATED FROM INTEGRATION)
     # ========================================
-    
-    st.markdown("---")
-    st.subheader("📋 Select Sections to Generate")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        exec_summary = st.checkbox("1. Executive Summary", value=True, key="chk_exec")
-        about_crave = st.checkbox("2. About Crave InfoTech", value=True, key="chk_crave")
-        our_solution = st.checkbox("3. Our Understanding & Solution", value=True, key="chk_solution")
-        project_scope = st.checkbox("4. Project Scope", value=True, key="chk_scope")
-    
-    with col2:
-        delivery_approach = st.checkbox("5. Project Delivery Approach", value=True, key="chk_delivery")
-        timelines= st.checkbox("6. Project Timelines", value=True, key="chk_timelines")
-        sign_off = st.checkbox("7. Sign Off", value=True, key="chk_signoff")
-        key_assumptions = st.checkbox("8. Key Assumptions", value=True, key="chk_assumptions")
-
-    # Build selected sections list
-    selected_sections = []
-    if exec_summary: selected_sections.append("Executive Summary")
-    if about_crave: selected_sections.append("About Crave InfoTech")
-    if our_solution: selected_sections.append("Our Understanding & Solution")
-    if project_scope: selected_sections.append("Project Scope")
-    if delivery_approach: selected_sections.append("Project Delivery Approach")
-    if timelines: selected_sections.append("Project Timelines")
-    if sign_off: selected_sections.append("Sign Off")
-    if key_assumptions: selected_sections.append("Key Assumptions")
-
-    st.markdown("---")
-
-    # ========================================
-    # GENERATE BUTTON
-    # ========================================
-    
-    if st.button("⚡ Generate Content"):
-        st.session_state.pop("edited_sections", None)
+    with st.expander("⚙️ Input Configuration", expanded=True):
         
-        # Reset old editor text areas
-        for key in list(st.session_state.keys()):
-            if key.startswith("editor_"):
-                st.session_state.pop(key)
-
-        # if not reference_text:
-        #     st.warning("⚠ Please upload an RFP first.")
-        #     return
-        # Allow generating without RFP
-        if not reference_text:
-            reference_text = ""
-            st.info("ℹ No RFP uploaded — generating a generic SOW draft.")
-
+        # --- CLIENT DETAILS & RFP UPLOAD ---
+        st.markdown("#### 📝 Client Details & RFP Upload")
         
-        if not selected_sections:
-            st.warning("⚠ Please select at least one section to generate.")
-            return
+        # Client name input
+        client_name = st.text_input("Enter Client Name (required)", st.session_state["client_name_gts"])
+        st.session_state["client_name_gts"] = client_name # Update session state
 
-        # Generate selected sections
-        with st.spinner(f"⏳ Generating {len(selected_sections)} selected sections..."):
-            generated_sections = generate_selected_sections(
-                client, model_name, reference_text, client_name, selected_sections
-            )
+        # File upload
+        uploaded_file = st.file_uploader(
+            "Upload RFP Document",
+            type=["pdf", "docx", "xlsx", "pptx"],
+            key="rfp_uploader_gts_v2",
+            help="Upload PDF, Word, Excel or PowerPoint reference document.",
+        )
+        # Handle file upload change
+        if uploaded_file != st.session_state["uploaded_file_gts"]:
+            st.session_state["uploaded_file_gts"] = uploaded_file
+            if "reference_text" in st.session_state:
+                st.session_state.pop("reference_text") # Clear old reference text if a new file is uploaded
+            st.rerun() # Rerun to process file immediately
 
+        st.markdown("---")
+        
+        # --- SECTION SELECTION ---
+        st.markdown("#### 📋 Select Sections to Generate (in order)")
+        st.caption("✨ Tick sections in the order you want them generated. They will be numbered #1, #2, etc.")
 
-        MASTER_ORDER = [
+        # Master list of sections
+        SECTION_LIST = [
             "Executive Summary",
             "About Crave InfoTech",
-            "Our Understanding & Solution",
+            "Our Understanding",
             "Project Scope",
-            "Project Delivery Approach",
+            "Solution", 
+            "Project Approach",
             "Project Timelines",
             "Sign Off",
             "Key Assumptions",
         ]
-
-        ordered_list = []
-
-        for section_name in MASTER_ORDER:
-            if section_name in generated_sections:
-                content = generated_sections[section_name]
-                content = re.sub(r"</?[^>]+>", "", content).strip()
-                ordered_list.append({
-                    "title": section_name,
-                    "content": content
-                })
-
-        st.session_state["edited_sections"] = ordered_list
-
         
-        st.success(f"✅ Generated {len(selected_sections)} sections!")
+        # Initialize checkbox states in session state (once)
+        if "checkbox_states_gts" not in st.session_state:
+            st.session_state["checkbox_states_gts"] = {section: False for section in SECTION_LIST}
+        
+        # Display checkboxes in 2 columns with live order tracking
+        col1, col2 = st.columns(2)
+        
+        # Render checkboxes and track state changes
+        for i, section in enumerate(SECTION_LIST):
+            col = col1 if i < 4 else col2
+            with col:
+                # Get current state
+                current_state = st.session_state["checkbox_states_gts"][section]
+                # Use a unique key for checkboxes in GTS
+                new_state = st.checkbox(section, value=current_state, key=f"chk_gts_{section}_v2")
+                
+                # Update state if changed
+                st.session_state["checkbox_states_gts"][section] = new_state
+        
+        # Build selected sections list in the order they appear in SECTION_LIST
+        selected_sections = [s for s in SECTION_LIST if st.session_state["checkbox_states_gts"].get(s)]
+
+        # Display selected sections with order numbers
+        if selected_sections:
+            st.markdown("---")
+            st.markdown("### ✅ Selected Sections (in generation order)")
+            cols_display = st.columns(min(3, len(selected_sections)))
+            for idx, section in enumerate(selected_sections):
+                with cols_display[idx % len(cols_display)]:
+                    st.markdown(f"**#{idx + 1}** — {section}")
+        
+        st.markdown("---")
+        
+        # ========================================
+        # GENERATE BUTTON (INSIDE EXPANDER)
+        # ========================================
+        
+        if st.button("⚡ Generate Content"):
+            st.session_state.pop("edited_sections", None)
+            
+            # Reset old editor text areas
+            for key in list(st.session_state.keys()):
+                if key.startswith("editor_"):
+                    st.session_state.pop(key)
+
+            # --- PROCESS RFP FILE IF UPLOADED ---
+            reference_text = st.session_state.get("reference_text", "")
+            
+            if uploaded_file and not reference_text:
+                # Need to process file if not already done
+                with st.spinner("Processing RFP..."):
+                    raw_text = extract_text_from_file(uploaded_file)
+                    if len(raw_text.split()) > 3500:
+                        st.session_state["reference_text"] = summarize_large_rfp(client, model_name=model_name, text=raw_text)
+                    else:
+                        st.session_state["reference_text"] = raw_text
+                reference_text = st.session_state["reference_text"]
+                st.success(f"✅ Extracted {len(raw_text.split())} words from RFP.")
+            elif not uploaded_file:
+                reference_text = ""        # Use empty reference
+                st.info("ℹ No RFP uploaded — generating a generic SOW draft.")
+
+            
+            if not selected_sections:
+                st.warning("⚠ Please select at least one section to generate.")
+            elif not client_name:
+                st.warning("⚠ Please enter the Client Name.")
+            else:
+                # Generate selected sections
+                with st.spinner(f"⏳ Generating {len(selected_sections)} selected sections..."):
+                    generated_sections = generate_selected_sections(
+                        client, model_name, reference_text, client_name, selected_sections
+                    )
+
+                MASTER_ORDER = SECTION_LIST # Use the section list as the master order
+
+                ordered_list = []
+
+                for section_name in MASTER_ORDER:
+                    if section_name in generated_sections:
+                        content = re.sub(r"</?[^>]+>", "", generated_sections[section_name]).strip()
+                        ordered_list.append({
+                            "title": section_name,
+                            "content": content
+                        })
+
+                st.session_state["edited_sections"] = ordered_list
+                st.success(f"✅ Generated {len(selected_sections)} sections!")
+
+    
+    # --- RFP Processing (Moved logic to the Generate button block for better control) ---
+    # The block below is now only for showing extracted assets if reference_text is already loaded.
+
+    reference_text = st.session_state.get("reference_text", "")
 
     # ========================================
-    # PREVIEW TABS
+    # PREVIEW TABS (OUTSIDE INPUT CONFIGURATION)
     # ========================================
     
     if "edited_sections" in st.session_state:
@@ -533,13 +620,10 @@ def main():
     if "edited_sections" in st.session_state:
         buffer = io.BytesIO()
         
-        # NOTE: You'll need to create a NEW template for V2 with updated placeholders
-        template_path = "Template/EAM_Template.docx"
+        template_path = "Template/GTS_Template.docx"
         
-        # If V2 template doesn't exist yet, fallback to original
         if not os.path.exists(template_path):
-            st.warning("⚠ V2 template not found, using original template. Please create EAM_Template_V2.docx")
-            template_path = "Template/EAM_Template.docx"
+            st.warning("⚠ Template not found. Please create GTS_Template.docx")
         
         final_doc = Document(template_path)
 
@@ -553,9 +637,10 @@ def main():
         placeholder_map = {
             "Executive Summary": "<EXEC_SUMMARY>",
             "About Crave InfoTech": "<ABOUT_CRAVE>",
-            "Our Understanding & Solution": "<OUR_SOL>",  # NEW placeholder
+            "Our Understanding": "<OUR_SOL>",  # NEW placeholder
             "Project Scope": "<PROJECT_SCOPE>",
-            "Project Delivery Approach": "<DELIVERY_APPROACH>",
+            "Solution": "<SOLUTION_SEC>", 
+            "Project Approach": "<DELIVERY_APPROACH>",
             "Project Timelines": "<TIMELINES>",  # RENAMED placeholder
             "Sign Off": "<SIGN_OFF>",
             "Key Assumptions": "<KEY_ASSUMPTIONS>"
@@ -567,7 +652,7 @@ def main():
             if title in placeholder_map:
                 insert_formatted_text(final_doc, placeholder_map[title], content)
 
-        # Insert PPT assets
+        # Insert PPT assets (placeholders remain for completeness, even if GTS doesn't use all)
         if "slide17_image" in st.session_state:
             insert_image_at_placeholder(final_doc, "<PPT_IMAGE>", st.session_state["slide17_image"])
         if "slide8_table" in st.session_state:
@@ -585,12 +670,8 @@ def main():
         buffer.seek(0)
 
         st.download_button(
-            label="📥 Download Final SOW Document (V2)",
+            label="📥 Download Final SOW Document",
             data=buffer,
-            file_name=f"EAM_SOW_V2_{datetime.now().strftime('%Y%m%d_%H%M')}.docx",
+            file_name=f"GTS_SOW_V2_{datetime.now().strftime('%Y%m%d_%H%M')}.docx",
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         )
-
-
-# if __name__ == "__main__":
-#     main()

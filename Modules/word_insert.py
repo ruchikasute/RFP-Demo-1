@@ -4,6 +4,18 @@ import os, io
 from docx.oxml import OxmlElement
 from docx.text.paragraph import Paragraph
 
+def remove_static_before_placeholder(doc, placeholder):
+    for i, p in enumerate(doc.paragraphs):
+        if placeholder in p.text:
+            # Delete only the 2–3 paragraphs immediately above the placeholder
+            start = max(0, i - 3)
+            for j in range(i - 1, start - 1, -1):
+                if placeholder not in doc.paragraphs[j].text:
+                    p_to_remove = doc.paragraphs[j]._element
+                    p_to_remove.getparent().remove(p_to_remove)
+            return
+
+
 def _create_paragraph_after(existing_paragraph, text=None, apply_default_spacing=True):
     new_p_elm = OxmlElement("w:p")
     existing_paragraph._p.addnext(new_p_elm)
@@ -49,16 +61,24 @@ def extract_block(tag, text):
     return match.group(1).strip()
 
 
-def insert_formatted_text(doc, placeholder, text, resource_table_markdown_text=None):
-    """
-    Inserts formatted content into the Word doc based on RAW line patterns.
-    Supports:
-    - Markdown Headings (#, ##, ###)
-    - Bullets (-, •, *)
-    - Nested bullets (2+ spaces)
-    - Markdown tables
-    - Bold markers (**text**)
-    """
+# def insert_formatted_text(doc, placeholder, text, resource_table_markdown_text=None):
+#     """
+#     Inserts formatted content into the Word doc based on RAW line patterns.
+#     Supports:
+#     - Markdown Headings (#, ##, ###)
+#     - Bullets (-, •, *)
+#     - Nested bullets (2+ spaces)
+#     - Markdown tables
+#     - Bold markers (**text**)
+#     """
+def insert_formatted_text(
+    doc,
+    placeholder,
+    text,
+    resource_table_markdown_text=None,
+    replace=False,
+    **kwargs
+):
 
     # ---- FIND PLACEHOLDER ----
     target_p = None
@@ -79,8 +99,38 @@ def insert_formatted_text(doc, placeholder, text, resource_table_markdown_text=N
     if not target_p:
         return
 
-    target_p.text = ""
+    # target_p.text = ""
+    # # last_para = target_p
+    # lines = text.splitlines()
+    # # Replace placeholder with empty text but KEEP paragraph
+    # target_p.text = target_p.text.replace(placeholder, "")
+    # last_para = target_p
+
+    # --------------------------------------------------------
+    # NEW PATCH — CLEAR ORIGINAL TEMPLATE TEXT
+    # --------------------------------------------------------
+    # if replace:
+    #     target_p.text = ""   # wipe old static content completely
+
+    if replace:
+        # 1️⃣ Completely remove the entire paragraph node (not just text)
+        p = target_p._p                   # XML paragraph <w:p>
+        parent = p.getparent()
+        idx = parent.index(p)
+        parent.remove(p)
+
+        # 2️⃣ Create a brand-new empty paragraph at the same index
+        from docx.oxml import OxmlElement
+        from docx.text.paragraph import Paragraph
+
+        new_p = OxmlElement("w:p")
+        parent.insert(idx, new_p)
+        target_p = Paragraph(new_p, doc)
+
+    
+    # last_para remembers where we add new paragraphs
     last_para = target_p
+
     lines = text.splitlines()
 
     # Detect whether List Bullet styles have numbering
@@ -124,7 +174,20 @@ def insert_formatted_text(doc, placeholder, text, resource_table_markdown_text=N
         is_md_h1 = stripped.startswith("# ")
         is_md_h2 = stripped.startswith("## ")
         is_md_h3 = stripped.startswith("### ")
+        is_md_h4 = stripped.startswith("#### ") 
 
+        if is_md_h4:
+            clean = stripped.replace("#### ", "").strip()
+            para = _create_paragraph_after(last_para, clean)
+
+            # Apply your Heading Style for these subheadings
+            para.style = "Heading 4"
+
+            last_para = para
+            i += 1
+            continue
+
+        
         if is_md_h3:
             clean = stripped.replace("### ", "").strip()
             para = _create_paragraph_after(last_para, clean)
@@ -216,11 +279,12 @@ def insert_formatted_text(doc, placeholder, text, resource_table_markdown_text=N
             # Create new bullet paragraph
             para = _create_paragraph_after(last_para, "")
             
-            # APPLY REAL WORD BULLET STYLE
+            # # APPLY REAL WORD BULLET STYLE
             if indent_level < 2:
                 para.style = "List Bullet 2"
             else:
                 para.style = "List Bullet 2"
+
 
             # DO NOT REMOVE NUMBERING RUNS – Word needs them
             for r in list(para._p.iter("w:r")):
@@ -334,7 +398,7 @@ def insert_image_at_placeholder(doc, placeholder, image_bytes):
 
     # Insert image in the same paragraph
     run = target_para.add_run()
-    run.add_picture(io.BytesIO(image_bytes), width=Inches(7.5))   # adjust size
+    run.add_picture(io.BytesIO(image_bytes), width=Inches(7))   # adjust size
 
     # Optional styling
     target_para.alignment = 1   # center alignment
@@ -416,3 +480,167 @@ def update_heading2_style(doc):
     p_format.space_before = Pt(15)
     p_format.space_after = Pt(4)
 
+
+from docx.shared import Pt
+from docx.oxml import OxmlElement
+
+from docx.shared import Pt
+from docx.oxml import OxmlElement
+from docx.text.paragraph import Paragraph
+
+def insert_table_at_placeholder(doc, placeholder, df):
+    """
+    Reliable table insertion that:
+    - Finds placeholder text (even inside bullets or merged paragraphs)
+    - Removes ONLY the placeholder text, not the paragraph
+    - Inserts a clean anchor paragraph
+    - Inserts the table after the anchor
+    - Prevents Word XML merging issues
+    """
+
+    target_para = None
+
+    # 1. Search paragraphs normally
+    for p in doc.paragraphs:
+        if placeholder in p.text:
+            target_para = p
+            break
+
+    # 2. Search inside tables
+    if not target_para:
+        for table in doc.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    for p in cell.paragraphs:
+                        if placeholder in p.text:
+                            target_para = p
+                            break
+
+    if not target_para:
+        return False  # placeholder not found
+
+    # 3. Remove ONLY the placeholder text from the paragraph
+    target_para.text = target_para.text.replace(placeholder, "").strip()
+
+    # 4. Create a NEW anchor paragraph just after the placeholder paragraph
+    anchor_xml = OxmlElement("w:p")
+    target_para._p.addnext(anchor_xml)
+    anchor_para = Paragraph(anchor_xml, doc)
+
+    # 5. Now build the table
+    table = doc.add_table(rows=1, cols=len(df.columns))
+    table.style = "Style1"
+
+    # Header row
+    hdr_cells = table.rows[0].cells
+    for i, col in enumerate(df.columns):
+        hdr_cells[i].text = str(col)
+        for run in hdr_cells[i].paragraphs[0].runs:
+            run.font.bold = True
+            run.font.size = Pt(10)
+
+    # Body rows
+    for _, row in df.iterrows():
+        row_cells = table.add_row().cells
+        for i, value in enumerate(row):
+            row_cells[i].text = str(value)
+
+    # 6. Insert the table after anchor paragraph
+    anchor_xml.addnext(table._tbl)
+
+    return True
+
+
+# def insert_table_at_placeholder(doc, placeholder, df):
+#     """
+#     Inserts a Word table exactly where the placeholder appears in the text content
+#     generated by the LLM (same behavior as insert_image_at_placeholder).
+#     """
+
+#     target_para = None
+
+#     # 1. Search paragraphs
+#     for p in doc.paragraphs:
+#         if placeholder in p.text:
+#             target_para = p
+#             break
+
+#     # 2. Search inside tables
+#     if not target_para:
+#         for table in doc.tables:
+#             for row in table.rows:
+#                 for cell in row.cells:
+#                     for p in cell.paragraphs:
+#                         if placeholder in p.text:
+#                             target_para = p
+#                             break
+
+#     if not target_para:
+#         return False  # placeholder missing
+
+#     # 3. Remove placeholder text
+#     # target_para.text = ""
+#     p = target_para._p
+#     parent = p.getparent()
+#     idx = parent.index(p)
+#     parent.remove(p)
+
+#     # Create a clean anchor paragraph
+#     new_p = OxmlElement("w:p")
+#     parent.insert(idx, new_p)
+#     anchor_para = Paragraph(new_p, doc)
+
+#     # 4. Create table object
+#     table = doc.add_table(rows=1, cols=len(df.columns))
+#     table.style = "Style1"        # uses your existing table style
+#     hdr_cells = table.rows[0].cells
+
+#     # Header row
+#     for i, col in enumerate(df.columns):
+#         hdr_cells[i].text = str(col)
+#         for run in hdr_cells[i].paragraphs[0].runs:
+#             run.font.bold = True
+#         hdr_cells[i].paragraphs[0].font = Pt(10)
+
+#     # Body rows
+#     for _, row in df.iterrows():
+#         row_cells = table.add_row().cells
+#         for i, value in enumerate(row):
+#             row_cells[i].text = str(value)
+
+#     # 5. Insert table XML after placeholder paragraph
+#     target_para._p.addnext(table._tbl)
+
+#     return True
+
+
+def remove_table_by_tag(doc, tag):
+    """
+    Removes the FIRST table where ANY run in ANY paragraph 
+    of ANY cell contains the placeholder tag.
+    """
+
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                # Check each run inside each paragraph
+                for p in cell.paragraphs:
+                    full_text = "".join(run.text for run in p.runs)
+                    if tag in full_text:
+                        # Remove entire table
+                        tbl = table._element
+                        tbl.getparent().remove(tbl)
+                        return True
+    return False
+
+
+# def remove_table_by_tag(doc, tag):
+#     for table in doc.tables:
+#         try:
+#             if tag in table.cell(0, 0).text:
+#                 tbl = table._element
+#                 tbl.getparent().remove(tbl)
+#                 return True
+#         except:
+#             pass
+#     return False

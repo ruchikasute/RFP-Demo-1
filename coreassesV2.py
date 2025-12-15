@@ -32,78 +32,6 @@ def insert_excel_appendix(final_doc):
     )
 
 
-
-def generate_all_sections(client, model_name,  client_name):
-
-    prompt = f"""
-You are a Senior SAP Consultant from Crave InfoTech.
-
-Generate ALL 8 sections of an CoreAssess.AI SOW.
-
-Client: {client_name}
-
-REFERENCE SOW STYLE GUIDE:
-{st.session_state['knowledge_text']}
-
-
-STRICT RULES:
-- Output ONLY the 8 sections.
-- Follow EXACT tag structure.
-- No extra text outside tags.
-
-=====================================
-OUTPUT FORMAT (FOLLOW EXACTLY)
-=====================================
-
-<EXEC_SUMMARY>
-[content]
-
-<ABOUT_CRAVE>
-[content]
-
-<ABOUT_CLIENT>
-[content]
-
-<PROJECT_SCOPE>
-[content]
-
-<DELIVERY_APPROACH>
-[content]
-
-<RESOURCE_TIMELINE>
-Write a SINGLE short narrative paragraph (3–5 lines).
-
-<SIGN_OFF>
-[content]
-
-<APPENDIX>
-[content]
-
-"""
-
-    response = client.chat.completions.create(
-        model=model_name,
-        messages=[{"role":"user","content":prompt}],
-        temperature=0.4
-    )
-
-    full_output = response.choices[0].message.content.strip()
-
-    # EXTRACT each block
-    extracted = {
-        "Executive Summary": extract_block("EXEC_SUMMARY", full_output),
-        "About Crave InfoTech": extract_block("ABOUT_CRAVE", full_output),
-        "About Client": extract_block("ABOUT_CLIENT", full_output),
-        "Project Scope": extract_block("PROJECT_SCOPE", full_output),
-        "Project Delivery Approach": extract_block("DELIVERY_APPROACH", full_output),
-        "Resource Allocation & Timelines": extract_block("RESOURCE_TIMELINE", full_output),
-        "Sign Off": extract_block("SIGN_OFF", full_output),
-        "Appendix": extract_block("APPENDIX", full_output),
-    }
-
-    return extracted
-
-
 import streamlit as st
 from openai import AzureOpenAI
 import os, io, re
@@ -133,9 +61,14 @@ import pandas as pd
 from concurrent.futures import ThreadPoolExecutor
 from pptx import Presentation
 
-def generate_exec_summary(client, model_name, client_name):
+def generate_exec_summary(client, model_name,  knowledge_text,client_name):
     prompt = f"""
 You are a Senior SAP Consultant from Crave InfoTech.
+
+USE THIS CONTEXT FOR UNDERSTANDING:
+
+KNOWLEDGE BASE:
+{knowledge_text}
 
 Generate ONLY the Executive Summary for a CoreAssess.AI-based Clean Core Assessment SOW.
 
@@ -169,34 +102,97 @@ INSTRUCTIONS:
 Output only the content.
 """
     response = client.chat.completions.create(
-        model=model_name,
+        model="Codetest",
         messages=[{"role":"user","content":prompt}],
         temperature=0.3
     )
     return response.choices[0].message.content.strip()
 
-def generate_our_understanding(client, model_name, client_name):
+def generate_our_understanding(client, model_name, knowledge_text, client_name):
+    """
+    Generate the Clean Core Assessment 'Our Understanding' section
+    using a structured, consulting-style format.
+    """
+
     prompt = f"""
-Generate the 'Our Understanding' section for a Clean Core Assessment SOW.
+You are a Senior SAP Clean Core Consultant from Crave InfoTech.
 
-INSTRUCTIONS:
-- Write 2–3 paragraphs.
-- Describe understanding of customer's ERP landscape, custom code, enhancements, integrations.
-- Explain need for modernization and clean-core alignment.
-- No technical jargon. No bullets.
 
-Output only the section content.
+Generate the full “Our Understanding” section for the Clean Core Assessment SOW for {client_name}.  
+USE THIS CONTEXT FOR UNDERSTANDING:
+
+KNOWLEDGE BASE:
+{knowledge_text}
+
+===========================
+STRUCTURE (MANDATORY)
+===========================
+
+The section must contain the following three subsections in order:
+
+3.1 Current Landscape  
+3.2 Key Challenges  
+3.3 Business Need for Clean Core Alignment  
+
+===========================
+STRICT CONTENT RULES
+===========================
+
+GENERAL:
+- Each subsection must be exactly ONE paragraph of 4–6 lines.
+- Business-focused tone (consulting language), no technical terminology.
+- No SAP module naming, no APIs, no configurations, no custom objects, no transports, no code-level discussion.
+- No repeated ideas across subsections.
+- Do NOT use markdown or formatting syntax.
+- Output only the content.
+
+3.1 CURRENT LANDSCAPE:
+- Describe the client’s business environment, operational complexity, reliance on customizations, and current ERP usage.
+- Emphasize modernization need, process variability, and governance gaps.
+- No lists or bullets in this subsection.
+
+3.2 KEY CHALLENGES:
+- Begin with one paragraph (4–6 lines) summarizing high-level business challenges arising from customizations, inconsistent processes, or non-standard enhancements.
+- After the paragraph, add 3–4 short business challenges as hyphen (-) bullets.
+- Challenges must be business challenges (not technical), e.g., process inconsistency, scalability limitations, compliance pressure, operational inefficiencies.
+
+3.3 BUSINESS NEED FOR CLEAN CORE ALIGNMENT:
+- One paragraph (4–6 lines).
+- Explain WHY Clean Core is needed: standardization, simplification, reduced operational risk, readiness for future innovations, and improved governance.
+- Focus on strategic value: agility, reliability, lower cost-to-change, and long-term sustainability.
+
+===========================
+FORMAT RULES (CRITICAL)
+===========================
+
+The headings must appear EXACTLY as written below:
+3.1 Current Landscape
+3.2 Key Challenges
+3.3 Business Need for Clean Core Alignment
+
+- Do NOT indent headings.
+- No extra spaces or symbols before the numbers.
+- Only plain text output.
+
+Output ONLY the final content. No tags, no notes, no explanations.
 """
+
     response = client.chat.completions.create(
         model=model_name,
-        messages=[{"role":"user","content":prompt}],
+        messages=[{"role": "user", "content": prompt}],
         temperature=0.4
     )
+
     return response.choices[0].message.content.strip()
 
-def generate_project_scope(client, model_name, client_name):
+def generate_project_scope(client, model_name,  knowledge_text, client_name):
     prompt = f"""
 Write the 'Project Scope' section for a Clean Core Assessment SOW.
+
+USE THIS CONTEXT FOR UNDERSTANDING:
+
+KNOWLEDGE BASE:
+{knowledge_text}
 
 Include ONLY the following subsections:
 
@@ -250,9 +246,69 @@ RULES:
 
     return response.choices[0].message.content.strip()
 
-def generate_solution_approach(client, model_name, client_name):
+def generate_solution_section(client, model_name, knowledge_text, client_name):
+
+    placeholder = "[[ARCHITECTURE_IMG]]"
+
     prompt = f"""
-Generate the 'Proposed Solution Approach' for a Clean Core Assessment SOW.
+You are creating Section 5 — Solution Overview for the Clean Core Assessment SOW for {client_name}.
+
+MANDATORY:
+You MUST include the placeholder EXACTLY as: {placeholder}
+Do NOT modify it.
+
+====================
+STRUCTURE
+====================
+
+5.1 Proposed Architecture
+Write a 6–8 line paragraph describing:
+- High-level SAP BTP architectural positioning for Clean Core modernization
+- How the platform enables extensibility, governance, and sustainable operations
+- How it supports standardization and future readiness
+- Include a reference to the architecture diagram (business tone only)
+
+Then on a new line write ONLY:
+{placeholder}
+
+5.2 Bill of Material (BOM)
+Write 5–7 bullets using (•).
+The bullets must:
+- List SAP BTP services relevant for Clean Core modernization
+- Use only business-friendly names (e.g., SAP BTP Identity Authentication, SAP BTP Workflow Management)
+- No descriptions after the service name
+- No technical jargon
+- Do NOT reuse any service more than once
+- Let the LLM choose the appropriate SAP BTP services (do NOT copy from the prompt)
+
+====================
+RULES
+====================
+- No markdown
+- No bold or formatting syntax
+- Use only paragraphs + (•) bullets
+- Output MUST include placeholder {placeholder} exactly once
+- Output only the section content
+
+
+USE THIS CONTEXT FOR UNDERSTANDING:
+
+KNOWLEDGE BASE:
+{knowledge_text}
+"""
+
+    response = client.chat.completions.create(
+        model=model_name,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.35,
+    )
+
+    return response.choices[0].message.content.strip()
+
+
+def generate_delivery_approach(client, model_name, knowledge_text, client_name):
+    prompt = f"""
+Generate the 'Proposed Approach' for a Clean Core Assessment SOW.
 
 INSTRUCTIONS:
 Write 2–3 paragraphs covering:
@@ -272,7 +328,7 @@ Output only the narrative content.
     )
     return response.choices[0].message.content.strip()
 
-def generate_team_structure(client, model_name, client_name):
+def generate_team_structure(client, model_name,knowledge_text,  client_name):
     prompt = f"""
 Write the 'Team Structure' section for a Clean Core Assessment SOW.
 
@@ -293,7 +349,7 @@ Output a 4–6 line paragraph.
 
 
 
-def generate_commercials(client, model_name, client_name):
+def generate_commercials(client, model_name, knowledge_text, client_name):
     prompt = f"""
 Write ONLY the 'Commercials & Payment Terms' section.
 
@@ -336,7 +392,7 @@ Output only the content.
     )
     return response.choices[0].message.content.strip()
 
-def generate_key_assumptions(client, model_name, client_name):
+def generate_key_assumptions(client, model_name,knowledge_text,  client_name):
     prompt = f"""
 Write the 'Key Assumptions' section for a Clean Core Assessment SOW.
 
@@ -368,18 +424,21 @@ def generate_selected_sections(client, model_name, client_name, selected_section
     Generate ONLY the sections the user selected (CoreAssess SOW).
     Uses parallel execution for speed.
     """
+    knowledge_text = st.session_state.get("knowledge_text", "")
+    excel_md = st.session_state.get("excel_markdown", "")
 
     # Map UI Section Names → Generation Functions
     section_generators = {
-        "Executive Summary": lambda: generate_exec_summary(client, model_name, client_name),
+        "Executive Summary": lambda: generate_exec_summary(client, model_name, knowledge_text, client_name),
         "About Crave InfoTech": lambda: generate_about_crave(client, model_name, client_name),
-        "Our Understanding": lambda: generate_our_understanding(client, model_name, client_name),
-        "Project Scope": lambda: generate_project_scope(client, model_name, client_name),
-        "Proposed Solution Approach": lambda: generate_solution_approach(client, model_name, client_name),
-        "Team Structure": lambda: generate_team_structure(client, model_name, client_name),
-        "Commercials & Payment Terms": lambda: generate_commercials(client, model_name, client_name),
+        "Our Understanding": lambda: generate_our_understanding(client, model_name, knowledge_text, client_name),
+        "Project Scope": lambda: generate_project_scope(client, model_name,  knowledge_text,client_name),
+        "Solution": lambda: generate_solution_section(client, model_name,  knowledge_text,client_name),
+        "Proposed Approach": lambda: generate_delivery_approach(client, model_name, knowledge_text, client_name),
+        "Team Structure": lambda: generate_team_structure(client, model_name, knowledge_text, client_name),
+        "Commercials & Payment Terms": lambda: generate_commercials(client, model_name, knowledge_text, client_name),
         "Sign Off": lambda: generate_sign_off(client, model_name, client_name),
-        "Key Assumptions": lambda: generate_key_assumptions(client, model_name, client_name)    }
+        "Key Assumptions": lambda: generate_key_assumptions(client, model_name, knowledge_text, client_name)    }
 
     generated = {}
 
@@ -463,10 +522,10 @@ def main():
         about_crave = st.checkbox("2. About Crave InfoTech", value=True, key="chk_crave")
         our_understanding = st.checkbox("3. Our Understanding", value=True, key="chk_understanding")
         project_scope = st.checkbox("4. Project Scope", value=True, key="chk_scope")
-
+        solution = st.checkbox("5. Solution", value=True, key="chk_sol")
     with col2:
-        solution_approach = st.checkbox("5. Proposed Solution Approach", value=True, key="chk_solution")
-        team_structure = st.checkbox("6. Team Structure", value=True, key="chk_team")
+        solution_approach = st.checkbox("6. Proposed Approach", value=True, key="chk_solution")
+        team_structure = st.checkbox("7. Team Structure", value=True, key="chk_team")
         commercials = st.checkbox("8. Commercials & Payment Terms", value=True, key="chk_commercials")
         sign_off = st.checkbox("9. Sign Off", value=True, key="chk_signoff")
         assumptions = st.checkbox("10. Key Assumptions", value=True, key="chk_assumptions")
@@ -477,7 +536,8 @@ def main():
     if about_crave: selected_sections.append("About Crave InfoTech")
     if our_understanding: selected_sections.append("Our Understanding")
     if project_scope: selected_sections.append("Project Scope")
-    if solution_approach: selected_sections.append("Proposed Solution Approach")
+    if solution: selected_sections.append("Solution")
+    if solution_approach: selected_sections.append("Proposed Approach")
     if team_structure: selected_sections.append("Team Structure")
     if commercials: selected_sections.append("Commercials & Payment Terms")
     if sign_off: selected_sections.append("Sign Off")
@@ -510,7 +570,8 @@ def main():
             "About Crave InfoTech",
             "Our Understanding",
             "Project Scope",
-            "Proposed Solution Approach",
+            "Solution",
+            "Proposed Approach",
             "Team Structure",
             "Commercials & Payment Terms",
             "Sign Off",
@@ -557,7 +618,8 @@ def main():
             "About Crave InfoTech": "<ABOUT_CRAVE>",
             "Our Understanding": "<OUR_SOL>",
             "Project Scope": "<PROJECT_SCOPE>",
-            "Proposed Solution Approach": "<DELIVERY_APPROACH>",
+            "Solution": "<SOLUTION>",
+            "Proposed Approach": "<DELIVERY_APPROACH>",
             "Team Structure": "<TEAM_STRUCTURE>",
             "Commercials & Payment Terms": "<PAYMENT TERMS>",
             "Sign Off": "<SIGN_OFF>",

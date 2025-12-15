@@ -17,3 +17,16 @@ vector_db/
 freeze.txt
 # Ignore temporary folder created for pipreqs
 reqtemp/
+ai.py
+appdev.py
+bw.py
+coreassess.py
+coreassessV2.py
+eam.py
+eamV2.py
+gts.py
+gtsV2.py
+hana_ee.py
+integration.py
+integrationV2.py
+integrationV3.py

@@ -582,6 +582,3 @@ def main():
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         )
 
-
-# if __name__ == "__main__":
-#     main()

@@ -1,5 +1,5 @@
 import streamlit as st
-import integration, coreasses, gts, ai ,eamV2, appdev, hana_ee, integrationV2, gtsV2, bw# 👈 This will call your current async generator
+import coreassesV3, aiV2 ,eamV3, appdevV2, hana_eeV2, integrationV4, gtsV3, bwV2# 👈 This will call your current async generator
 
 if "initialized" not in st.session_state:
     st.session_state.view = "home"
@@ -173,24 +173,7 @@ if st.session_state.view == "home":
 # -------------------------------------------------------
 # 5. INTEGRATION MODULE (your RFP app)
 # -------------------------------------------------------
-# elif st.session_state.view == "integration":
-#     # --- TOP-LEFT BACK LINK ---
-#     st.markdown(
-#         "<p style='color:#666; font-size:16px; cursor:pointer;'>⬅ Back</p>",
-#         unsafe_allow_html=True
-#     )
 
-#     if st.button(" ", key="go_home"):
-#         st.session_state.view = "home"
-#         st.rerun()
-
-
-#     integration.main()  # 👈 Runs your async RFP generator
-#     # st.markdown("<div class='back-btn'>", unsafe_allow_html=True)
-#     # if st.button("⬅ Back to Home", key="back_home"):
-#     #     st.session_state.view = "home"
-#     #     st.rerun()
-#     st.markdown("</div>", unsafe_allow_html=True)
 elif st.session_state.view == "integration":
 
     # TEXT-ONLY BACK BUTTON
@@ -198,7 +181,7 @@ elif st.session_state.view == "integration":
         st.session_state.view = "home"
         st.rerun()
 
-    integrationV2.main()
+    integrationV4.main()
 
 
 # -------------------------------------------------------
@@ -209,13 +192,8 @@ elif st.session_state.view == "coreasses":
     if st.button("⬅ Back", key="back_integration"):
         st.session_state.view = "home"
         st.rerun()
-    coreasses.main()
-    # st.subheader("💼 Core Assessment Module")
-    # st.markdown("<div class='back-btn'>", unsafe_allow_html=True)
-    # if st.button("⬅ Back to Home", key="back_home"):
-    #     st.session_state.view = "home"
-    #     st.rerun()
-    # st.markdown("</div>", unsafe_allow_html=True)
+    coreassesV3.main()
+
 
 
 # -------------------------------------------------------
@@ -226,13 +204,8 @@ elif st.session_state.view == "gts":
     if st.button("⬅ Back", key="back_integration"):
         st.session_state.view = "home"
         st.rerun()
-    gtsV2.main()
-    # # st.subheader("💼 Core Assessment Module")
-    # st.markdown("<div class='back-btn'>", unsafe_allow_html=True)
-    # if st.button("⬅ Back to Home", key="back_home"):
-    #     st.session_state.view = "home"
-    #     st.rerun()
-    # st.markdown("</div>", unsafe_allow_html=True)
+    gtsV3.main()
+
 
 # -------------------------------------------------------
 # 8. AI
@@ -242,7 +215,7 @@ elif st.session_state.view == "ai":
     if st.button("⬅ Back", key="back_integration"):
         st.session_state.view = "home"
         st.rerun()
-    ai.main()
+    aiV2.main()
     # st.subheader("💼 Core Assessment Module")
     st.markdown("<div class='back-btn'>", unsafe_allow_html=True)
     if st.button("⬅ Back to Home", key="back_home"):
@@ -257,7 +230,7 @@ elif st.session_state.view == "eam":
     if st.button("⬅ Back", key="back_integration"):
         st.session_state.view = "home"
         st.rerun()
-    eamV2.main()
+    eamV3.main()
 
 # -------------------------------------------------------
 # 10. HANA EE
@@ -266,7 +239,7 @@ elif st.session_state.view == "hana_ee":
     if st.button("⬅ Back", key="back_integration"):
         st.session_state.view = "home"
         st.rerun()
-    hana_ee.main()
+    hana_eeV2.main()
 
 # -------------------------------------------------------
 # 11. BW Modernization
@@ -275,7 +248,7 @@ elif st.session_state.view == "bw":
     if st.button("⬅ Back", key="back_integration"):
         st.session_state.view = "home"
         st.rerun()
-    bw.main()
+    bwV2.main()
 
 # -------------------------------------------------------
 # 11. App Development
@@ -284,4 +257,4 @@ elif st.session_state.view == "appdev":
     if st.button("⬅ Back", key="back_integration"):
         st.session_state.view = "home"
         st.rerun()
-    appdev.main()
+    appdevV2.main()

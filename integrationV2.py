@@ -5,8 +5,9 @@ from datetime import datetime
 from docx import Document
 
 # Assuming these imports work as in your original code
-from Modules.startup import init
-init("Integration")
+# Run init ONLY once
+from Modules.docx_table_handler import update_table_in_doc
+
 
 from Modules.extractors import (
     extract_text_from_file,
@@ -366,7 +367,9 @@ Output ONLY the final structured content. No tags, no extra notes.
 def generate_selected_sections(client, model_name, reference_text, client_name, selected_sections):
     """Generate only the sections that user selected"""
     
-    total_interfaces = st.session_state.get("total_interfaces", "UNKNOWN")
+    # total_interfaces = st.session_state.get("total_interfaces", "UNKNOWN")
+    total_interfaces = st.session_state.get("total_interfaces") or "Not Provided"
+
     generated_sections = {}
     
     # Map NEW section names to their generation functions
@@ -402,6 +405,7 @@ def generate_selected_sections(client, model_name, reference_text, client_name, 
     
     return generated_sections
 
+from Modules.startup import init
 from Modules.docx_table_handler import extract_table_by_tag
 # ========================================
 # MAIN APP
@@ -409,6 +413,12 @@ from Modules.docx_table_handler import extract_table_by_tag
 
 def main():
     st.title("🌐 Integration — SOW Generator")
+
+    if "app_initialized" not in st.session_state:
+        
+        init("Integration")
+        st.session_state["app_initialized"] = True
+
     st.caption("✨ Restructured sections with selective generation")
     
     # Initialize session state
@@ -494,7 +504,7 @@ def main():
     # ========================================
     
     st.markdown("---")
-    st.subheader("📋 Select Sections to Generate (Structure)")
+    st.subheader("📋 Select Sections to Generate")
     
     col1, col2 = st.columns(2)
     
@@ -527,7 +537,7 @@ def main():
     # GENERATE BUTTON
     # ========================================
     
-    if st.button("⚡ Generate Selected Sections"):
+    if st.button("⚡ Generate Content"):
         st.session_state.pop("edited_sections", None)
         
         # Reset old editor text areas
@@ -535,9 +545,14 @@ def main():
             if key.startswith("editor_"):
                 st.session_state.pop(key)
 
+        # if not reference_text:
+        #     st.warning("⚠ Please upload an RFP first.")
+        #     return
+        # Allow generation even without RFP
         if not reference_text:
-            st.warning("⚠ Please upload an RFP first.")
-            return
+            reference_text = ""        # Use empty reference
+            st.info("ℹ No RFP uploaded — generating a generic SOW draft.")
+
         
         if not selected_sections:
             st.warning("⚠ Please select at least one section to generate.")
@@ -606,10 +621,7 @@ def main():
         load_table("df_commercials", "{{TABLE_COMMERCIALS}}")
         load_table("df_milestones", "{{TABLE_MILESTONES}}")
 
-        # for i, tab in enumerate(tabs):
-        #     with tab:
-        #         sec = sections[i]
-        #         title = sec["title"]
+
             # Add tables below corresponding sections
         for i, tab in enumerate(tabs):
             with tab:
@@ -620,31 +632,47 @@ def main():
                     st.subheader("📊 Section Tables")
 
                     with st.expander("RACI Matrix", expanded=True):
-                        st.data_editor(st.session_state["df_raci"], key="edit_raci")
+                        new_value = st.data_editor(
+                            st.session_state["df_raci"],
+                            key="edit_raci"
+                        )
+
+                        # Only update if user actually edited
+                        if new_value is not None and not new_value.equals(st.session_state["df_raci"]):
+                            st.session_state["df_raci"] = new_value.copy()
 
                 if title == "Project Delivery Approach":
                     st.markdown("---")
                     st.subheader("📊 Section Tables")
                     with st.expander("Migration Assessment", expanded=False):
-                        st.data_editor(st.session_state["df_assessment"], key="edit_assessment")
-
-
+                        new_value = st.data_editor(
+                            st.session_state["df_assessment"],
+                            key="edit_assessment"
+                        )
+                        if new_value is not None and not new_value.equals(st.session_state["df_assessment"]):
+                            st.session_state["df_assessment"] = new_value.copy()
+                        
+                
                 if title == "Project Timelines":
                     st.markdown("---")
                     st.subheader("📊 Section Tables")
 
-                    # with st.expander("Staffing Plan", expanded=True):
-                    #     st.data_editor(st.session_state["df_staffing"], key="edit_staffing")
-
                     with st.expander("Resource Allocation", expanded=False):
-                        st.data_editor(st.session_state["df_resources"], key="edit_resources")
-
-                    # with st.expander("Commercials", expanded=False):
-                    #     st.data_editor(st.session_state["df_commercials"], key="edit_commercials")
+                        new_value = st.data_editor(
+                            st.session_state["df_resources"],
+                            key="edit_resources"
+                        )
+                        if new_value is not None and not new_value.equals(st.session_state["df_resources"]):
+                            st.session_state["df_resources"] = new_value.copy()
 
                     with st.expander("Payment Milestones", expanded=False):
-                        st.data_editor(st.session_state["df_milestones"], key="edit_milestones")
-            
+                        new_value = st.data_editor(
+                            st.session_state["df_milestones"],
+                            key="edit_milestones"
+                        )
+                        if new_value is not None and not new_value.equals(st.session_state["df_milestones"]):
+                            st.session_state["df_milestones"] = new_value.copy()
+                                
     # ========================================
     # DOWNLOAD BUTTON (V2 TEMPLATE)
     # ========================================
@@ -663,7 +691,7 @@ def main():
         final_doc = Document(template_path)
 
         # Basic replacements
-        replace_client_name_in_doc(final_doc, client_name)
+        
         replace_submission_date(final_doc)
         doc_no = generate_document_number(client_name)
         insert_document_number(final_doc, "<DOCUMENT_NO>", doc_no)
@@ -700,6 +728,34 @@ def main():
         if "total_interfaces" in st.session_state:
             replace_inline_placeholder(final_doc, "<TOTAL_INTERFACES>", st.session_state["total_interfaces"])
 
+        # ----- UPDATE TABLES IN WORD -----
+
+        # 1. RACI Matrix
+        if "df_raci" in st.session_state:
+            update_table_in_doc(final_doc, "{{TABLE_RACI}}", st.session_state["df_raci"])
+
+        # 2. Migration Assessment
+        if "df_assessment" in st.session_state:
+            update_table_in_doc(final_doc, "{{TABLE_ASSESSMENT}}", st.session_state["df_assessment"])
+
+        # 3. Staffing Plan
+        if "df_staffing" in st.session_state:
+            update_table_in_doc(final_doc, "{{TABLE_STAFFING}}", st.session_state["df_staffing"])
+
+        # 4. Resource Allocation
+        if "df_resources" in st.session_state:
+            update_table_in_doc(final_doc, "{{TABLE_RESOURCES}}", st.session_state["df_resources"])
+
+        # 5. Commercials (if used)
+        if "df_commercials" in st.session_state:
+            update_table_in_doc(final_doc, "{{TABLE_COMMERCIALS}}", st.session_state["df_commercials"])
+
+        # 6. Payment Milestones
+        if "df_milestones" in st.session_state:
+            update_table_in_doc(final_doc, "{{TABLE_MILESTONES}}", st.session_state["df_milestones"])
+
+        replace_client_name_in_doc(final_doc, client_name)
+        
         final_doc.save(buffer)
         buffer.seek(0)
 
